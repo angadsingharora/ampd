@@ -247,6 +247,15 @@ All tables live in the `public` schema on Supabase Postgres. The `locations` tab
 │          │       ┌──────┴──────┐       │          │
 │          │───1:N─│   group     │       │          │
 │          │       │  _messages  │       │          │
+│          │       └─────────────┘       │          │
+│          │                             │          │
+│          │───1:1─│dating_profiles│     │          │
+│          │       └──────┬───────┘      │          │
+│          │              │1:N           │          │
+│          │       ┌──────┴──────┐       │          │
+│          │───1:N─│dating_likes │─N:1───│          │
+│          │       └─────────────┘       │          │
+│          │───1:N─│dating_matches│─N:1──│          │
 └──────────┘       └─────────────┘       └──────────┘
 ```
 
@@ -428,6 +437,78 @@ Used by the admin moderation system. Any user can create a report; only admins c
 **Unique constraint:** `(user_id, token)` — prevents duplicate token registration.
 
 A user can have multiple tokens (multiple devices). Tokens are registered on app launch and used by the Edge Function to dispatch push notifications.
+
+#### `dating_profiles`
+
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `user_id`    | `uuid`        | FK → users.id, UNIQUE, NOT NULL |
+| `photos`     | `text[]`      | NOT NULL, array of Storage URLs (2–6 items) |
+| `prompts`    | `jsonb`       | NOT NULL, array of `{ prompt, answer }` (exactly 3) |
+| `age`        | `smallint`    | NOT NULL, CHECK >= 18           |
+| `bio`        | `text`        | NULLABLE, max 300 chars         |
+| `active`     | `boolean`     | default `true`                  |
+| `created_at` | `timestamptz` | default `now()`                 |
+| `updated_at` | `timestamptz` | default `now()`                 |
+
+One profile per user. The `photos` array stores public URLs from the `dating-photos` Storage bucket. The `prompts` column stores structured data:
+
+```json
+[
+  { "prompt": "What I'm looking for...", "answer": "Someone who can beat me at Mario Kart" },
+  { "prompt": "My simple pleasures...", "answer": "Late-night ramen runs" },
+  { "prompt": "I go crazy for...", "answer": "Live music on campus" }
+]
+```
+
+The `active` flag lets users pause their dating profile without deleting it.
+
+#### `dating_likes`
+
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `liker_id`   | `uuid`        | FK → users.id, NOT NULL         |
+| `liked_id`   | `uuid`        | FK → users.id, NOT NULL         |
+| `liked_content_type` | `text` | `'photo'` / `'prompt'`, NOT NULL |
+| `liked_content_index` | `smallint` | NOT NULL (which photo or prompt was liked) |
+| `comment`    | `text`        | NULLABLE, max 200 chars         |
+| `created_at` | `timestamptz` | default `now()`                 |
+
+**Unique constraint:** `(liker_id, liked_id)` — one like per pair.
+
+The `liked_content_type` + `liked_content_index` fields capture the Hinge-style mechanic of liking a *specific* piece of someone's profile (e.g., their 2nd photo or their 1st prompt answer), not just a generic swipe.
+
+#### `dating_matches`
+
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `user_a`     | `uuid`        | FK → users.id, NOT NULL         |
+| `user_b`     | `uuid`        | FK → users.id, NOT NULL         |
+| `created_at` | `timestamptz` | default `now()`                 |
+
+**Unique constraint:** `(LEAST(user_a, user_b), GREATEST(user_a, user_b))` — one match per pair regardless of who liked first.
+
+A match is created by a database trigger when a mutual like is detected:
+
+```sql
+CREATE OR REPLACE FUNCTION check_for_match()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM dating_likes
+    WHERE liker_id = NEW.liked_id AND liked_id = NEW.liker_id
+  ) THEN
+    INSERT INTO dating_matches (user_a, user_b)
+    VALUES (LEAST(NEW.liker_id, NEW.liked_id), GREATEST(NEW.liker_id, NEW.liked_id))
+    ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+```
 
 ---
 
