@@ -1,6 +1,6 @@
 # Ampd — Design Document
 
-**Version:** 1.0
+**Version:** 2.0
 **Date:** March 21, 2026
 **Status:** MVP
 
@@ -19,28 +19,29 @@ Browse nearby feed → Chat with a friend → Pin a private moment
 
 ### 1.2 What Ampd Is NOT (MVP Constraints)
 
-- No group chats or communities
-- No media uploads (text-only posts)
-- No push notifications
-- No admin panel or moderation tools
 - No stories, reels, or ephemeral content
+- No third-party OAuth (email/password only for MVP)
+- No video uploads (images only)
 
 ---
 
 ## 2. Tech Stack
 
-| Layer          | Technology                        |
-| -------------- | --------------------------------- |
-| Mobile Runtime | React Native (Expo SDK 52+)       |
-| Language       | TypeScript (strict mode)          |
-| Navigation     | React Navigation v7 (bottom tabs) |
-| Maps           | react-native-maps (Google/Apple)  |
-| Backend        | Supabase (hosted)                 |
-| Database       | PostgreSQL (via Supabase)         |
-| Auth           | Supabase Auth (email/password)    |
-| Realtime       | Supabase Realtime (WebSocket)     |
-| State          | React Context + useReducer        |
-| Location       | expo-location                     |
+| Layer           | Technology                          |
+| --------------- | ----------------------------------- |
+| Mobile Runtime  | React Native (Expo SDK 52+)         |
+| Language        | TypeScript (strict mode)            |
+| Navigation      | React Navigation v7 (bottom tabs)   |
+| Maps            | react-native-maps (Google/Apple)    |
+| Backend         | Supabase (hosted)                   |
+| Database        | PostgreSQL (via Supabase)           |
+| Auth            | Supabase Auth (email/password)      |
+| Realtime        | Supabase Realtime (WebSocket)       |
+| File Storage    | Supabase Storage (image uploads)    |
+| Push Notifs     | expo-notifications + Edge Functions |
+| State           | React Context + useReducer          |
+| Location        | expo-location                       |
+| Image Picker    | expo-image-picker                   |
 
 ### 2.1 Key Dependencies
 
@@ -54,6 +55,9 @@ Browse nearby feed → Chat with a friend → Pin a private moment
   "@supabase/supabase-js": "^2.x",
   "expo-location": "~18.x",
   "expo-secure-store": "~14.x",
+  "expo-image-picker": "~16.x",
+  "expo-notifications": "~0.29.x",
+  "expo-device": "~7.x",
   "react-native-safe-area-context": "^5.x",
   "react-native-screens": "^4.x"
 }
@@ -66,32 +70,37 @@ Browse nearby feed → Chat with a friend → Pin a private moment
 ### 3.1 High-Level Diagram
 
 ```
-┌──────────────────────────────────────────────────┐
-│                   React Native App               │
-│                                                  │
-│  ┌──────┐  ┌──────┐  ┌──────┐  ┌─────────┐      │
-│  │ Map  │  │ Feed │  │ Chat │  │ Profile │      │
-│  │Screen│  │Screen│  │Screen│  │ Screen  │      │
-│  └──┬───┘  └──┬───┘  └──┬───┘  └────┬────┘      │
-│     │         │         │            │           │
-│  ┌──┴─────────┴─────────┴────────────┴──┐        │
-│  │          Service Layer               │        │
-│  │  (posts, friends, messages, etc.)    │        │
-│  └──────────────┬───────────────────────┘        │
-│                 │                                │
-│  ┌──────────────┴───────────────────────┐        │
-│  │        Supabase Client               │        │
-│  │  (Auth, DB, Realtime, PostGIS)       │        │
-│  └──────────────┬───────────────────────┘        │
-└─────────────────┼────────────────────────────────┘
-                  │ HTTPS + WSS
-┌─────────────────┼────────────────────────────────┐
-│           Supabase Platform                      │
-│  ┌──────────┐ ┌───────────┐ ┌──────────────┐    │
-│  │   Auth   │ │ Postgres  │ │  Realtime     │    │
-│  │          │ │ + PostGIS │ │  (WebSocket)  │    │
-│  └──────────┘ └───────────┘ └──────────────┘    │
-└──────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│                      React Native App                     │
+│                                                           │
+│  ┌──────┐ ┌──────┐ ┌──────┐ ┌───────────┐ ┌─────────┐    │
+│  │ Map  │ │ Feed │ │ Chat │ │Communities│ │ Profile │    │
+│  │Screen│ │Screen│ │Screen│ │  Screen   │ │ Screen  │    │
+│  └──┬───┘ └──┬───┘ └──┬───┘ └─────┬─────┘ └────┬────┘    │
+│     │        │        │           │             │         │
+│  ┌──┴────────┴────────┴───────────┴─────────────┴──┐      │
+│  │              Service Layer                      │      │
+│  │  (posts, friends, messages, communities,        │      │
+│  │   media, notifications, admin)                  │      │
+│  └──────────────────┬──────────────────────────────┘      │
+│                     │                                     │
+│  ┌──────────────────┴──────────────────────────────┐      │
+│  │            Supabase Client                      │      │
+│  │  (Auth, DB, Realtime, Storage)                  │      │
+│  └──────────────────┬──────────────────────────────┘      │
+└─────────────────────┼─────────────────────────────────────┘
+                      │ HTTPS + WSS
+┌─────────────────────┼─────────────────────────────────────┐
+│              Supabase Platform                            │
+│  ┌────────┐ ┌─────────┐ ┌──────────┐ ┌─────────────────┐ │
+│  │  Auth  │ │Postgres │ │ Realtime │ │    Storage       │ │
+│  │        │ │         │ │(WebSocket│ │ (image uploads)  │ │
+│  └────────┘ └─────────┘ └──────────┘ └─────────────────┘ │
+│  ┌──────────────────────────────────────────────────────┐ │
+│  │              Edge Functions                          │ │
+│  │  (push notification dispatch, admin actions)         │ │
+│  └──────────────────────────────────────────────────────┘ │
+└───────────────────────────────────────────────────────────┘
 ```
 
 ### 3.2 Project Structure
@@ -109,53 +118,72 @@ Ampd/
 │   │   └── TabNavigator.tsx    # Bottom tab navigator
 │   │
 │   ├── screens/
-│   │   ├── MapScreen.tsx       # Live map (default tab)
-│   │   ├── FeedScreen.tsx      # Location-based feed
-│   │   ├── ChatListScreen.tsx  # Conversation list
-│   │   ├── ChatScreen.tsx      # 1:1 message thread
-│   │   ├── ProfileScreen.tsx   # User profile + settings
-│   │   ├── CreatePostScreen.tsx# Drop a post
-│   │   ├── MomentsScreen.tsx   # Private pins
-│   │   ├── LoginScreen.tsx     # Auth: login
-│   │   └── SignUpScreen.tsx    # Auth: register
+│   │   ├── MapScreen.tsx           # Live map (default tab)
+│   │   ├── FeedScreen.tsx          # Location-based feed
+│   │   ├── ChatListScreen.tsx      # Conversation list (DMs + groups)
+│   │   ├── ChatScreen.tsx          # 1:1 message thread
+│   │   ├── GroupChatScreen.tsx     # Group/community chat thread
+│   │   ├── CommunityListScreen.tsx # Browse/search communities
+│   │   ├── CommunityScreen.tsx     # Single community detail + feed
+│   │   ├── CreateCommunityScreen.tsx # Create new community
+│   │   ├── ProfileScreen.tsx       # User profile + settings
+│   │   ├── CreatePostScreen.tsx    # Drop a post (text + optional image)
+│   │   ├── MomentsScreen.tsx       # Private pins
+│   │   ├── AdminScreen.tsx         # Admin dashboard (admin-only)
+│   │   ├── LoginScreen.tsx         # Auth: login
+│   │   └── SignUpScreen.tsx        # Auth: register
 │   │
 │   ├── components/
-│   │   ├── PostCard.tsx        # Post display in feed
-│   │   ├── PostMarker.tsx      # Post pin on map
-│   │   ├── FriendMarker.tsx    # Friend dot on map
-│   │   ├── VoteButtons.tsx     # Upvote/downvote controls
-│   │   ├── ChatBubble.tsx      # Single message bubble
-│   │   └── FriendListItem.tsx  # Friend row component
+│   │   ├── PostCard.tsx            # Post display in feed (text + image)
+│   │   ├── PostMarker.tsx          # Post pin on map
+│   │   ├── FriendMarker.tsx        # Friend dot on map
+│   │   ├── VoteButtons.tsx         # Upvote/downvote controls
+│   │   ├── ChatBubble.tsx          # Single message bubble
+│   │   ├── FriendListItem.tsx      # Friend row component
+│   │   ├── CommunityCard.tsx       # Community list item
+│   │   ├── ImagePreview.tsx        # Thumbnail for post images
+│   │   └── ReportButton.tsx        # Flag content for review
 │   │
 │   ├── services/
-│   │   ├── supabase.ts         # Supabase client init
-│   │   ├── auth.ts             # Sign up, sign in, sign out
-│   │   ├── posts.ts            # CRUD + geo-query for posts
-│   │   ├── votes.ts            # Upvote/downvote logic
-│   │   ├── friends.ts          # Friend requests + status
-│   │   ├── messages.ts         # Send/fetch messages
-│   │   ├── locations.ts        # Update/fetch locations
-│   │   └── moments.ts          # Private pin CRUD
+│   │   ├── supabase.ts             # Supabase client init
+│   │   ├── auth.ts                 # Sign up, sign in, sign out
+│   │   ├── posts.ts                # CRUD + geo-query for posts
+│   │   ├── votes.ts                # Upvote/downvote logic
+│   │   ├── friends.ts              # Friend requests + status
+│   │   ├── messages.ts             # Send/fetch DMs
+│   │   ├── groupMessages.ts        # Send/fetch group messages
+│   │   ├── communities.ts          # Community CRUD + membership
+│   │   ├── locations.ts            # Update/fetch locations
+│   │   ├── moments.ts              # Private pin CRUD
+│   │   ├── media.ts                # Image upload to Supabase Storage
+│   │   ├── notifications.ts        # Push token registration + sending
+│   │   └── admin.ts                # Moderation actions (ban, remove, reports)
 │   │
 │   ├── hooks/
-│   │   ├── useAuth.ts          # Auth state hook
-│   │   ├── useLocation.ts      # Device location tracking
-│   │   ├── useRealtime.ts      # Generic realtime subscription
-│   │   └── usePosts.ts         # Posts with geo-filter
+│   │   ├── useAuth.ts              # Auth state hook
+│   │   ├── useLocation.ts          # Device location tracking
+│   │   ├── useRealtime.ts          # Generic realtime subscription
+│   │   ├── usePosts.ts             # Posts with geo-filter
+│   │   └── useNotifications.ts     # Push notification setup + handlers
 │   │
 │   ├── context/
-│   │   └── AuthContext.tsx      # Auth provider
+│   │   ├── AuthContext.tsx          # Auth provider
+│   │   └── NotificationContext.tsx  # Push notification state
 │   │
 │   ├── types/
-│   │   └── index.ts            # Shared TypeScript types
+│   │   └── index.ts                # Shared TypeScript types
 │   │
 │   └── utils/
-│       ├── geo.ts              # Haversine, bounding box math
-│       └── time.ts             # Relative timestamps
+│       ├── geo.ts                  # Haversine, bounding box math
+│       ├── time.ts                 # Relative timestamps
+│       └── image.ts                # Image resize/compress before upload
 │
 └── supabase/
-    └── migrations/
-        └── 001_initial_schema.sql  # Full DDL + RLS
+    ├── migrations/
+    │   └── 001_initial_schema.sql  # Full DDL + RLS
+    └── functions/
+        └── push-notification/      # Edge Function for push dispatch
+            └── index.ts
 ```
 
 ---
@@ -181,6 +209,24 @@ All tables live in the `public` schema on Supabase Postgres. The `locations` tab
 │          │───1:1─│  locations  │       │          │
 │          │       └─────────────┘       │          │
 │          │───1:N─│  moments    │       │          │
+│          │       └─────────────┘       │          │
+│          │───1:N─│ push_tokens │       │          │
+│          │       └─────────────┘       │          │
+│          │───1:N─│  reports    │       │          │
+│          │       └─────────────┘       │          │
+│          │                             │          │
+│          │       ┌─────────────┐       │          │
+│          │───1:N─│ community   │       │          │
+│          │       │  _members   │       │          │
+│          │       └──────┬──────┘       │          │
+│          │              │N:1           │          │
+│          │       ┌──────┴──────┐       │          │
+│          │       │ communities │       │          │
+│          │       └──────┬──────┘       │          │
+│          │              │1:N           │          │
+│          │       ┌──────┴──────┐       │          │
+│          │───1:N─│   group     │       │          │
+│          │       │  _messages  │       │          │
 └──────────┘       └─────────────┘       └──────────┘
 ```
 
@@ -188,13 +234,14 @@ All tables live in the `public` schema on Supabase Postgres. The `locations` tab
 
 #### `users`
 
-| Column       | Type        | Constraints                  |
-| ------------ | ----------- | ---------------------------- |
-| `id`         | `uuid`      | PK, default `auth.uid()`     |
-| `username`   | `text`      | UNIQUE, NOT NULL             |
-| `created_at` | `timestamptz` | default `now()`            |
+| Column       | Type          | Constraints                          |
+| ------------ | ------------- | ------------------------------------ |
+| `id`         | `uuid`        | PK, default `auth.uid()`            |
+| `username`   | `text`        | UNIQUE, NOT NULL, 3–20 chars         |
+| `role`       | `text`        | `'user'` / `'admin'`, default `'user'` |
+| `created_at` | `timestamptz` | default `now()`                      |
 
-Maps 1:1 with `auth.users`. Created via a trigger on sign-up.
+Maps 1:1 with `auth.users`. Created via a trigger on sign-up. The `role` field controls admin access (see Section 17).
 
 #### `friendships`
 
@@ -223,11 +270,14 @@ This simplifies querying "my friends" to a single WHERE on `user_id`.
 | `lat`          | `float8`      | NOT NULL                        |
 | `lng`          | `float8`      | NOT NULL                        |
 | `text`         | `text`        | NOT NULL, max 500 chars         |
+| `image_url`    | `text`        | NULLABLE, URL to Supabase Storage |
 | `is_anonymous` | `boolean`     | default `false`                 |
 | `score`        | `integer`     | default `0`                     |
 | `created_at`   | `timestamptz` | default `now()`                 |
 
 **Index:** `idx_posts_location` on `(lat, lng)` for geo-queries.
+
+Images are stored in Supabase Storage bucket `post-images`. The `image_url` column stores the public URL returned after upload. See Section 15 for the media upload pipeline.
 
 #### `votes`
 
@@ -289,6 +339,75 @@ Single row per user, upserted. The `sharing` flag controls whether friends can s
 | `lng`        | `float8`      | NOT NULL                        |
 | `created_at` | `timestamptz` | default `now()`                 |
 
+#### `communities`
+
+| Column        | Type          | Constraints                     |
+| ------------- | ------------- | ------------------------------- |
+| `id`          | `uuid`        | PK, default `gen_random_uuid()` |
+| `name`        | `text`        | UNIQUE, NOT NULL, 3–50 chars    |
+| `description` | `text`        | NULLABLE, max 500 chars         |
+| `created_by`  | `uuid`        | FK → users.id, NOT NULL         |
+| `lat`         | `float8`      | NULLABLE (location-anchored communities) |
+| `lng`         | `float8`      | NULLABLE                        |
+| `created_at`  | `timestamptz` | default `now()`                 |
+
+A community is a named group that users can join. It has an optional location anchor (e.g., "Northside Dorm" pinned to that building). The creator is auto-assigned as `admin` role in `community_members`.
+
+#### `community_members`
+
+| Column         | Type          | Constraints                     |
+| -------------- | ------------- | ------------------------------- |
+| `id`           | `uuid`        | PK, default `gen_random_uuid()` |
+| `community_id` | `uuid`        | FK → communities.id ON DELETE CASCADE |
+| `user_id`      | `uuid`        | FK → users.id ON DELETE CASCADE |
+| `role`         | `text`        | `'member'` / `'admin'`, default `'member'` |
+| `joined_at`    | `timestamptz` | default `now()`                 |
+
+**Unique constraint:** `(community_id, user_id)` — one membership per user per community.
+
+The `admin` role can remove members and delete the community. The community creator is always `admin`.
+
+#### `group_messages`
+
+| Column         | Type          | Constraints                     |
+| -------------- | ------------- | ------------------------------- |
+| `id`           | `uuid`        | PK, default `gen_random_uuid()` |
+| `community_id` | `uuid`        | FK → communities.id ON DELETE CASCADE |
+| `sender_id`    | `uuid`        | FK → users.id, NOT NULL         |
+| `text`         | `text`        | NOT NULL                        |
+| `created_at`   | `timestamptz` | default `now()`                 |
+
+Each community has a single group chat. Messages are visible to all members. Realtime subscription delivers new messages instantly.
+
+#### `reports`
+
+| Column        | Type          | Constraints                     |
+| ------------- | ------------- | ------------------------------- |
+| `id`          | `uuid`        | PK, default `gen_random_uuid()` |
+| `reporter_id` | `uuid`        | FK → users.id, NOT NULL         |
+| `target_type` | `text`        | `'post'` / `'message'` / `'user'` / `'group_message'`, NOT NULL |
+| `target_id`   | `uuid`        | NOT NULL (ID of the reported entity) |
+| `reason`      | `text`        | NOT NULL                        |
+| `status`      | `text`        | `'pending'` / `'reviewed'` / `'resolved'`, default `'pending'` |
+| `reviewed_by` | `uuid`        | FK → users.id, NULLABLE         |
+| `created_at`  | `timestamptz` | default `now()`                 |
+
+Used by the admin moderation system. Any user can create a report; only admins can review/resolve them.
+
+#### `push_tokens`
+
+| Column       | Type          | Constraints                     |
+| ------------ | ------------- | ------------------------------- |
+| `id`         | `uuid`        | PK, default `gen_random_uuid()` |
+| `user_id`    | `uuid`        | FK → users.id ON DELETE CASCADE |
+| `token`      | `text`        | NOT NULL                        |
+| `platform`   | `text`        | `'ios'` / `'android'`, NOT NULL |
+| `created_at` | `timestamptz` | default `now()`                 |
+
+**Unique constraint:** `(user_id, token)` — prevents duplicate token registration.
+
+A user can have multiple tokens (multiple devices). Tokens are registered on app launch and used by the Edge Function to dispatch push notifications.
+
 ---
 
 ## 5. Row-Level Security (RLS)
@@ -297,15 +416,20 @@ RLS is **enabled on every table**. All policies use `auth.uid()` to identify the
 
 ### 5.1 Policy Summary
 
-| Table         | SELECT                                      | INSERT                   | UPDATE                  | DELETE                  |
-| ------------- | ------------------------------------------- | ------------------------ | ----------------------- | ----------------------- |
-| `users`       | All authenticated users                     | Only own row (via trigger) | Own row only           | —                       |
-| `friendships` | Where `user_id = auth.uid()` or `friend_id = auth.uid()` | `user_id = auth.uid()`  | Own rows only          | Own rows only           |
-| `posts`       | All authenticated users                     | `user_id = auth.uid()`   | Own posts only          | Own posts only          |
-| `votes`       | Own votes only                              | `user_id = auth.uid()`   | Own votes only          | Own votes only          |
-| `messages`    | `sender_id` or `receiver_id = auth.uid()`   | `sender_id = auth.uid()` | —                       | —                       |
-| `locations`   | Only accepted friends (see below)           | `user_id = auth.uid()`   | `user_id = auth.uid()`  | —                       |
-| `moments`     | `user_id = auth.uid()`                      | `user_id = auth.uid()`   | `user_id = auth.uid()`  | `user_id = auth.uid()`  |
+| Table               | SELECT                                      | INSERT                   | UPDATE                  | DELETE                  |
+| ------------------- | ------------------------------------------- | ------------------------ | ----------------------- | ----------------------- |
+| `users`             | All authenticated users                     | Only own row (via trigger) | Own row only           | —                       |
+| `friendships`       | Where `user_id` or `friend_id = auth.uid()` | `user_id = auth.uid()`   | Own rows only           | Own rows only           |
+| `posts`             | All authenticated users                     | `user_id = auth.uid()`   | Own posts OR admin      | Own posts OR admin      |
+| `votes`             | Own votes only                              | `user_id = auth.uid()`   | Own votes only          | Own votes only          |
+| `messages`          | `sender_id` or `receiver_id = auth.uid()`   | `sender_id = auth.uid()` | —                       | Admin only              |
+| `locations`         | Only accepted friends (see below)           | `user_id = auth.uid()`   | `user_id = auth.uid()`  | —                       |
+| `moments`           | `user_id = auth.uid()`                      | `user_id = auth.uid()`   | `user_id = auth.uid()`  | `user_id = auth.uid()`  |
+| `communities`       | All authenticated users                     | Any authenticated user   | Creator or admin        | Creator or admin        |
+| `community_members` | Members of community or admin               | Own membership           | Community admin only    | Own membership or admin |
+| `group_messages`    | Members of community                        | Members of community     | —                       | Sender or admin         |
+| `reports`           | Own reports or admin                        | Any authenticated user   | Admin only              | Admin only              |
+| `push_tokens`       | Own tokens only                             | `user_id = auth.uid()`   | Own tokens only         | Own tokens only         |
 
 ### 5.2 Locations RLS — Friends Only
 
@@ -328,11 +452,64 @@ USING (
 );
 ```
 
+### 5.3 Communities RLS — Members Only Chat
+
+Group messages are only visible to community members:
+
+```sql
+CREATE POLICY "Community members can view group messages"
+ON group_messages FOR SELECT
+USING (
+  EXISTS (
+    SELECT 1 FROM community_members
+    WHERE community_id = group_messages.community_id
+      AND user_id = auth.uid()
+  )
+);
+```
+
+### 5.4 Reports RLS — Users Create, Admins Manage
+
+```sql
+CREATE POLICY "Users can create reports"
+ON reports FOR INSERT
+WITH CHECK (reporter_id = auth.uid());
+
+CREATE POLICY "Users can view own reports, admins view all"
+ON reports FOR SELECT
+USING (
+  reporter_id = auth.uid()
+  OR EXISTS (
+    SELECT 1 FROM users WHERE id = auth.uid() AND role = 'admin'
+  )
+);
+
+CREATE POLICY "Admins can update reports"
+ON reports FOR UPDATE
+USING (
+  EXISTS (
+    SELECT 1 FROM users WHERE id = auth.uid() AND role = 'admin'
+  )
+);
+```
+
+### 5.5 Admin Override Policies
+
+Admin users (`users.role = 'admin'`) have elevated access for moderation:
+
+- **Posts:** Can UPDATE (e.g., hide) and DELETE any post
+- **Messages:** Can DELETE any message (for moderation)
+- **Group messages:** Can DELETE any group message
+- **Reports:** Full CRUD
+- **Community members:** Can remove any member from any community
+
+Admin checks use a subquery: `EXISTS (SELECT 1 FROM users WHERE id = auth.uid() AND role = 'admin')`.
+
 ---
 
 ## 6. Realtime Subscriptions
 
-Supabase Realtime is used for two features. Both subscribe via the `supabase.channel()` API.
+Supabase Realtime is used for three features. All subscribe via the `supabase.channel()` API.
 
 ### 6.1 Messages
 
@@ -380,6 +557,30 @@ supabase
 ```
 
 **Lifecycle:** Subscribe on MapScreen mount. Since RLS restricts visibility, the subscription only receives rows the user is authorized to see.
+
+### 6.3 Group Messages
+
+Subscribe to new messages in a specific community chat:
+
+```typescript
+supabase
+  .channel(`group-${communityId}`)
+  .on(
+    'postgres_changes',
+    {
+      event: 'INSERT',
+      schema: 'public',
+      table: 'group_messages',
+      filter: `community_id=eq.${communityId}`,
+    },
+    (payload) => {
+      // Append to group chat state
+    }
+  )
+  .subscribe();
+```
+
+**Lifecycle:** Subscribe on GroupChatScreen mount for the active community, unsubscribe on unmount. RLS ensures only community members receive events.
 
 ---
 
@@ -513,9 +714,16 @@ const fetchPostsInBounds = async (region: Region) => {
 │                                 │
 │ Post text content here...       │
 │                                 │
-│ ▲ 12 ▼           0.3 mi away   │
+│ ┌─────────────────────────────┐ │
+│ │     [optional image]        │ │
+│ │     (tap to fullscreen)     │ │
+│ └─────────────────────────────┘ │
+│                                 │
+│ ▲ 12 ▼      ⚑ Report  0.3 mi  │
 └─────────────────────────────────┘
 ```
+
+Images render as a 16:9 thumbnail. Tapping opens a full-screen image viewer. The report flag icon opens a confirmation dialog before submitting a report.
 
 **Interactions:**
 - Tap ▲/▼ to vote (optimistic update, then persist)
@@ -531,56 +739,70 @@ const milesToDegLng = (miles: number, lat: number) =>
 
 ### 8.3 Create Post Screen
 
-**Purpose:** Drop a text post at the user's current location.
+**Purpose:** Drop a post (text + optional image) at the user's current location.
 
 **Fields:**
 - Text input (max 500 chars, required)
+- Image attach button (opens `expo-image-picker`)
 - Anonymous toggle (switch)
 - "Post" button
 
 **Flow:**
 1. Grab current location from `expo-location`
 2. Show mini-map preview with pin at current location
-3. On submit:
-   - Insert into `posts` table
+3. If user attaches an image:
+   - Compress/resize client-side (max 1024px wide, JPEG 80% quality)
+   - Show thumbnail preview with "X" to remove
+4. On submit:
+   - If image attached: upload to Supabase Storage `post-images/{userId}/{uuid}.jpg`
+   - Get public URL from Storage
+   - Insert into `posts` table with `image_url`
    - Navigate back to Map or Feed
    - Post appears immediately (optimistic or refetch)
 
 **Validation:**
 - Text must be 1–500 characters
+- Image max size: 5MB after compression
 - Location must be available (show error if denied)
 
 ### 8.4 Chat List Screen
 
-**Purpose:** List of conversations with other users.
+**Purpose:** List of all conversations — both 1:1 DMs and community group chats.
 
-**Query:**
-```sql
-SELECT DISTINCT ON (conversation_partner)
-  CASE WHEN sender_id = auth.uid() THEN receiver_id ELSE sender_id END AS partner_id,
-  text AS last_message,
-  created_at
-FROM messages
-WHERE sender_id = auth.uid() OR receiver_id = auth.uid()
-ORDER BY conversation_partner, created_at DESC;
-```
+**Layout:** Two sections via a segmented control at top: `DMs | Groups`
 
-In practice, this is done client-side by:
+**DMs section:**
+
+Built client-side by:
 1. Fetching all messages involving the current user
 2. Grouping by the other user's ID
 3. Taking the most recent message per group
 4. Sorting groups by most recent message
 
+**Groups section:**
+
+Built by:
+1. Fetching all communities where user is a member
+2. For each, fetching the most recent `group_messages` row
+3. Sorting by most recent message
+
 **Row layout:**
 
 ```
+DMs:
 ┌─────────────────────────────────┐
 │ 🟢 @username                    │
 │ Last message preview...    2m   │
 └─────────────────────────────────┘
+
+Groups:
+┌─────────────────────────────────┐
+│ 👥 Community Name               │
+│ @sender: Last msg preview  5m   │
+└─────────────────────────────────┘
 ```
 
-Tap → navigate to ChatScreen with that user.
+Tap DM → navigate to ChatScreen. Tap Group → navigate to GroupChatScreen.
 
 ### 8.5 Chat Screen (1:1)
 
@@ -666,6 +888,140 @@ const fetchConversation = async (otherUserId: string) => {
 └─────────────────────────────────┘
 ```
 
+### 8.8 Community List Screen
+
+**Purpose:** Browse and discover communities. Accessible from the Communities tab.
+
+**Sections:**
+1. **My Communities** — communities the user is a member of, sorted by most recent group message
+2. **Discover** — all communities the user is NOT a member of, sorted by member count
+
+**Search:** Text input at top filters both sections by community name (client-side filter for MVP).
+
+**Community card:**
+
+```
+┌─────────────────────────────────┐
+│ 👥 Northside Dorm               │
+│ A community for Northside...    │
+│ 42 members           📍 0.3 mi  │
+│                        [Join]   │
+└─────────────────────────────────┘
+```
+
+**Actions:**
+- Tap "Join" → insert `community_members` row
+- Tap card → navigate to CommunityScreen
+
+**FAB:** "+" button → opens CreateCommunityScreen
+
+### 8.9 Community Screen (Detail)
+
+**Purpose:** View a single community's details and enter its group chat.
+
+**Layout:**
+
+```
+┌─────────────────────────────────┐
+│ ← Back          Northside Dorm  │
+│                                 │
+│ A community for residents of    │
+│ the Northside dormitory.        │
+│                                 │
+│ 42 members  •  Created Mar 10   │
+│                                 │
+│ [Enter Chat]     [Leave]        │
+│                                 │
+│ Members:                        │
+│  @alice  @bob  @charlie  ...    │
+└─────────────────────────────────┘
+```
+
+**Admin view** (if `role = 'admin'`):
+- "Remove" button next to each member
+- "Delete Community" in danger zone
+- Member list shows role badges
+
+### 8.10 Create Community Screen
+
+**Purpose:** Create a new community.
+
+**Fields:**
+- Name (3–50 chars, required)
+- Description (optional, max 500 chars)
+- Pin to current location toggle (optional)
+
+**Flow:**
+1. Insert into `communities`
+2. Insert creator into `community_members` with `role = 'admin'`
+3. Navigate to the new CommunityScreen
+
+### 8.11 Group Chat Screen
+
+**Purpose:** Real-time group messaging within a community.
+
+**Behavior:** Identical to the 1:1 ChatScreen but:
+- Messages come from `group_messages` table filtered by `community_id`
+- Each bubble shows the sender's username above the message
+- Realtime subscription on `group_messages` for this community
+- All community members can send and read
+
+**Message layout:**
+
+```
+        @alice
+        ┌──────────────────┐
+        │ Their message     │  ← left-aligned
+        └──────────────────┘
+  ┌──────────────────┐
+  │ My message        │  ← right-aligned
+  └──────────────────┘
+        @bob
+        ┌──────────────────┐
+        │ Another message   │  ← left-aligned
+        └──────────────────┘
+```
+
+### 8.12 Admin Screen (Admin-Only)
+
+**Purpose:** Moderation dashboard for users with `role = 'admin'`.
+
+**Access:** Only visible in Profile tab if `user.role === 'admin'`. Non-admin users never see this screen.
+
+**Sections:**
+
+1. **Reports Queue**
+   - List of all reports with `status = 'pending'`, sorted by `created_at ASC` (oldest first)
+   - Each report shows: reporter username, target type, reason, timestamp
+   - Tap to expand and see the reported content inline
+   - Actions per report:
+     - **Dismiss** → set `status = 'resolved'`, no further action
+     - **Remove Content** → delete the reported post/message + set `status = 'resolved'`
+     - **Ban User** → set reported user's account to disabled via Supabase Auth admin API
+
+2. **Resolved Reports**
+   - Collapsible list of past reports with outcomes
+
+3. **Stats Overview**
+   - Total users, total posts, total communities, pending reports count
+   - Fetched via simple `COUNT(*)` queries
+
+**Report card:**
+
+```
+┌─────────────────────────────────┐
+│ ⚠ Report #42          pending   │
+│ Type: post                      │
+│ Reporter: @alice                │
+│ Reason: "Inappropriate content" │
+│                                 │
+│ Reported content:               │
+│ "The actual post text here..."  │
+│                                 │
+│ [Dismiss]  [Remove]  [Ban User] │
+└─────────────────────────────────┘
+```
+
 ---
 
 ## 9. Navigation Structure
@@ -684,19 +1040,29 @@ Root
     ├── Feed Tab
     │   └── FeedScreen
     │
+    ├── Communities Tab
+    │   ├── CommunityListScreen
+    │   ├── CommunityScreen
+    │   ├── CreateCommunityScreen
+    │   └── GroupChatScreen
+    │
     ├── Chat Tab
     │   ├── ChatListScreen
-    │   └── ChatScreen
+    │   ├── ChatScreen (1:1 DM)
+    │   └── GroupChatScreen (also reachable from Communities)
     │
     └── Profile Tab
         ├── ProfileScreen
-        └── MomentsScreen
+        ├── MomentsScreen
+        └── AdminScreen (admin-only, conditionally rendered)
 ```
 
 **Navigator types:**
 - `NavigationContainer` at root
 - Conditional render: `AuthStack` (Stack) if no session, `MainTabs` (BottomTab) if authenticated
 - Each tab contains a nested Stack navigator for drill-down screens
+- `AdminScreen` is only pushed onto the Profile stack if `user.role === 'admin'`
+- `GroupChatScreen` is shared between Communities and Chat tabs (defined once, navigable from both)
 
 ---
 
@@ -710,19 +1076,32 @@ No external state library. The app uses **React Context + local state** with the
 - Provides `user`, `session`, `loading`, auth methods
 - Listens to `supabase.auth.onAuthStateChange`
 
-### 10.2 Local Screen State
+### 10.2 NotificationContext
+
+- Wraps the app alongside AuthContext
+- Registers push token on login
+- Handles incoming notification routing (deep link to correct screen)
+- Manages notification permissions state
+
+### 10.3 Local Screen State
 
 Each screen manages its own data via `useState` + `useEffect`:
 - `MapScreen`: `posts[]`, `friendLocations[]`
 - `FeedScreen`: `posts[]`, `sortMode`
-- `ChatListScreen`: `conversations[]`
+- `ChatListScreen`: `conversations[]`, `groupConversations[]`
 - `ChatScreen`: `messages[]`
+- `GroupChatScreen`: `groupMessages[]`
+- `CommunityListScreen`: `myCommunities[]`, `discoverCommunities[]`
+- `AdminScreen`: `reports[]`, `stats`
 
-### 10.3 Why No Global Store
+### 10.4 Why No Global Store
 
-The MVP has no cross-screen state dependencies complex enough to justify Redux/Zustand. Each screen fetches its own data. The only shared state is auth (handled by context).
+With communities and notifications added, the app has moderate cross-screen state needs (e.g., unread counts, notification badges). For MVP, these are handled via:
+- **AuthContext** for user + role
+- **NotificationContext** for push state
+- Per-screen data fetching
 
-If state sharing becomes necessary later (e.g., unread message counts in the tab bar), a lightweight store like Zustand can be added without refactoring.
+If complexity grows (e.g., real-time unread badges across tabs), Zustand can be added without refactoring.
 
 ---
 
@@ -843,7 +1222,263 @@ const { data: friends } = await supabase
 
 ---
 
-## 14. Security Considerations
+## 14. Push Notifications
+
+### 14.1 Architecture
+
+Push notifications use Expo's push notification service (Expo Push API) triggered by Supabase Edge Functions.
+
+```
+Event occurs (new message, friend request, etc.)
+  → Supabase DB trigger fires
+  → Calls Edge Function via pg_net or webhook
+  → Edge Function reads push_tokens for target user(s)
+  → Sends to Expo Push API
+  → Expo routes to APNs (iOS) / FCM (Android)
+  → Device receives push
+```
+
+### 14.2 Token Registration
+
+On app launch, after auth:
+
+```typescript
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+
+const registerForPushNotifications = async () => {
+  if (!Device.isDevice) return; // Push doesn't work on emulators
+
+  const { status } = await Notifications.requestPermissionsAsync();
+  if (status !== 'granted') return;
+
+  const token = (await Notifications.getExpoPushTokenAsync()).data;
+
+  await supabase
+    .from('push_tokens')
+    .upsert(
+      { user_id: userId, token, platform: Platform.OS },
+      { onConflict: 'user_id,token' }
+    );
+};
+```
+
+### 14.3 Edge Function — Push Dispatcher
+
+Located at `supabase/functions/push-notification/index.ts`.
+
+Receives a payload with:
+- `target_user_id` — who to notify
+- `title` — notification title
+- `body` — notification body
+- `data` — navigation payload (e.g., `{ screen: 'Chat', userId: '...' }`)
+
+```typescript
+import { serve } from 'https://deno.land/std/http/server.ts';
+
+serve(async (req) => {
+  const { target_user_id, title, body, data } = await req.json();
+
+  // Fetch tokens for target user
+  const { data: tokens } = await supabaseAdmin
+    .from('push_tokens')
+    .select('token')
+    .eq('user_id', target_user_id);
+
+  // Send to Expo Push API
+  const messages = tokens.map((t) => ({
+    to: t.token,
+    title,
+    body,
+    data,
+    sound: 'default',
+  }));
+
+  await fetch('https://exp.host/--/api/v2/push/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(messages),
+  });
+
+  return new Response(JSON.stringify({ sent: messages.length }), { status: 200 });
+});
+```
+
+### 14.4 Notification Triggers
+
+| Event                  | Title                    | Body                           | Data payload             |
+| ---------------------- | ------------------------ | ------------------------------ | ------------------------ |
+| New DM                 | "New message"            | `"@sender: message preview"`  | `{ screen: 'Chat', userId }` |
+| New group message      | `"Community Name"`       | `"@sender: message preview"`  | `{ screen: 'GroupChat', communityId }` |
+| Friend request received| "Friend request"         | `"@username wants to connect"` | `{ screen: 'Profile' }` |
+| Friend request accepted| "Friend accepted"        | `"@username accepted your request"` | `{ screen: 'Profile' }` |
+| Post near you (future) | "Nearby activity"        | `"New post 0.2 mi away"`      | `{ screen: 'Feed' }`    |
+
+### 14.5 Client-Side Notification Handling
+
+```typescript
+Notifications.addNotificationResponseReceivedListener((response) => {
+  const data = response.notification.request.content.data;
+  if (data.screen === 'Chat') {
+    navigation.navigate('Chat', { userId: data.userId });
+  } else if (data.screen === 'GroupChat') {
+    navigation.navigate('GroupChat', { communityId: data.communityId });
+  }
+});
+```
+
+---
+
+## 15. Media Upload Pipeline
+
+### 15.1 Supabase Storage Setup
+
+**Bucket:** `post-images` (public read, authenticated write)
+
+Storage policies:
+- **INSERT:** `auth.uid()` must match the path prefix (`post-images/{userId}/...`)
+- **SELECT:** Public (anyone can read — images are shown in the feed)
+- **DELETE:** Only the uploader or admin
+
+### 15.2 Upload Flow
+
+```typescript
+import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
+
+const pickAndUploadImage = async (): Promise<string | null> => {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Images,
+    quality: 0.8,
+    allowsEditing: true,
+    aspect: [16, 9],
+  });
+
+  if (result.canceled) return null;
+
+  const uri = result.assets[0].uri;
+  const fileName = `${userId}/${crypto.randomUUID()}.jpg`;
+
+  const response = await fetch(uri);
+  const blob = await response.blob();
+
+  const { error } = await supabase.storage
+    .from('post-images')
+    .upload(fileName, blob, { contentType: 'image/jpeg' });
+
+  if (error) throw error;
+
+  const { data: { publicUrl } } = supabase.storage
+    .from('post-images')
+    .getPublicUrl(fileName);
+
+  return publicUrl;
+};
+```
+
+### 15.3 Image Constraints
+
+| Parameter    | Value              |
+| ------------ | ------------------ |
+| Max file size | 5 MB (after compression) |
+| Format       | JPEG only          |
+| Max width    | 1024px (auto-scaled) |
+| Aspect ratio | Free (but 16:9 suggested) |
+| Per-post     | 1 image max        |
+
+### 15.4 Rendering
+
+Images are displayed in `PostCard` and on the map (tapping a `PostMarker` shows the image in the expanded card). Uses `Image` component with `resizeMode="cover"` and lazy loading.
+
+---
+
+## 16. Communities & Group Chat
+
+### 16.1 Community Lifecycle
+
+```
+User creates community (name + optional description + optional location)
+  → Row in communities + community_members (role='admin')
+  → Community appears in Discover for others
+  → Others tap Join → community_members insert
+  → Group chat is immediately available
+```
+
+### 16.2 Community Discovery
+
+Communities are sorted by:
+- **My Communities:** most recent group message first
+- **Discover:** member count descending
+
+Location-anchored communities show distance from the user. Non-location communities are global.
+
+### 16.3 Group Chat Behavior
+
+- Messages are stored in `group_messages`
+- Realtime subscription per community (Section 6.3)
+- All members can send; no muting or permissions tiers beyond admin
+- Admin can delete any message
+- Messages show sender username above each bubble
+
+### 16.4 Leaving & Deletion
+
+- Any member can leave (delete their `community_members` row)
+- If the last admin leaves, the longest-tenured member is auto-promoted to admin
+- Admin can delete the community → cascades to `community_members` and `group_messages`
+
+---
+
+## 17. Admin & Moderation
+
+### 17.1 Admin Role
+
+Admin access is controlled by `users.role = 'admin'`. This is set manually in the database — there is no UI to promote yourself. The first admin is seeded during deployment.
+
+### 17.2 Report Flow
+
+```
+User taps ⚑ on a post/message/user
+  → Confirmation dialog: "Report this content?"
+  → User enters reason (text, required)
+  → INSERT into reports
+  → Admin sees it in AdminScreen reports queue
+  → Admin takes action: Dismiss / Remove / Ban
+```
+
+### 17.3 Admin Actions
+
+| Action         | What happens                                          |
+| -------------- | ----------------------------------------------------- |
+| **Dismiss**    | Set `reports.status = 'resolved'`, `reviewed_by = admin.id` |
+| **Remove**     | Delete the reported content + resolve report          |
+| **Ban User**   | Disable auth account via Supabase Admin API + resolve |
+
+Banning uses the Supabase admin client (service role key, server-side only) to call:
+```typescript
+supabaseAdmin.auth.admin.updateUserById(userId, { ban_duration: 'none' });
+```
+
+This is done via an Edge Function to keep the service role key off the client.
+
+### 17.4 Admin Dashboard Queries
+
+```typescript
+// Pending reports
+const { data: reports } = await supabase
+  .from('reports')
+  .select('*, reporter:users!reporter_id(username)')
+  .eq('status', 'pending')
+  .order('created_at', { ascending: true });
+
+// Stats
+const { count: userCount } = await supabase.from('users').select('*', { count: 'exact', head: true });
+const { count: postCount } = await supabase.from('posts').select('*', { count: 'exact', head: true });
+const { count: reportCount } = await supabase.from('reports').select('*', { count: 'exact', head: true }).eq('status', 'pending');
+```
+
+---
+
+## 18. Security Considerations
 
 ### 14.1 Anonymous Posts
 
@@ -863,7 +1498,7 @@ Out of scope for MVP. If abuse occurs, Supabase's built-in rate limiting on the 
 
 ---
 
-## 15. SQL Migration
+## 19. SQL Migration
 
 The full DDL for the initial migration:
 
@@ -880,6 +1515,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE users (
   id         uuid PRIMARY KEY DEFAULT auth.uid(),
   username   text UNIQUE NOT NULL CHECK (char_length(username) BETWEEN 3 AND 20),
+  role       text NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   created_at timestamptz DEFAULT now()
 );
 
@@ -899,6 +1535,7 @@ CREATE TABLE posts (
   lat          float8 NOT NULL,
   lng          float8 NOT NULL,
   text         text NOT NULL CHECK (char_length(text) BETWEEN 1 AND 500),
+  image_url    text,
   is_anonymous boolean DEFAULT false,
   score        integer DEFAULT 0,
   created_at   timestamptz DEFAULT now()
@@ -937,6 +1574,53 @@ CREATE TABLE moments (
   created_at timestamptz DEFAULT now()
 );
 
+CREATE TABLE communities (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name        text UNIQUE NOT NULL CHECK (char_length(name) BETWEEN 3 AND 50),
+  description text CHECK (char_length(description) <= 500),
+  created_by  uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  lat         float8,
+  lng         float8,
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE TABLE community_members (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  community_id uuid NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  user_id      uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role         text NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin')),
+  joined_at    timestamptz DEFAULT now(),
+  UNIQUE (community_id, user_id)
+);
+
+CREATE TABLE group_messages (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  community_id uuid NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
+  sender_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  text         text NOT NULL,
+  created_at   timestamptz DEFAULT now()
+);
+
+CREATE TABLE reports (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  reporter_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_type text NOT NULL CHECK (target_type IN ('post', 'message', 'user', 'group_message')),
+  target_id   uuid NOT NULL,
+  reason      text NOT NULL,
+  status      text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'reviewed', 'resolved')),
+  reviewed_by uuid REFERENCES users(id),
+  created_at  timestamptz DEFAULT now()
+);
+
+CREATE TABLE push_tokens (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token      text NOT NULL,
+  platform   text NOT NULL CHECK (platform IN ('ios', 'android')),
+  created_at timestamptz DEFAULT now(),
+  UNIQUE (user_id, token)
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
@@ -950,6 +1634,11 @@ CREATE INDEX idx_messages_conversation ON messages (
 );
 CREATE INDEX idx_friendships_user ON friendships (user_id, status);
 CREATE INDEX idx_friendships_friend ON friendships (friend_id, status);
+CREATE INDEX idx_community_members_user ON community_members (user_id);
+CREATE INDEX idx_community_members_community ON community_members (community_id);
+CREATE INDEX idx_group_messages_community ON group_messages (community_id, created_at DESC);
+CREATE INDEX idx_reports_status ON reports (status, created_at);
+CREATE INDEX idx_push_tokens_user ON push_tokens (user_id);
 
 -- ============================================
 -- TRIGGERS
@@ -985,6 +1674,20 @@ CREATE TRIGGER on_vote_change
   AFTER INSERT OR UPDATE OR DELETE ON votes
   FOR EACH ROW EXECUTE FUNCTION update_post_score();
 
+-- Auto-add community creator as admin member
+CREATE OR REPLACE FUNCTION add_community_creator()
+RETURNS TRIGGER AS $$
+BEGIN
+  INSERT INTO community_members (community_id, user_id, role)
+  VALUES (NEW.id, NEW.created_by, 'admin');
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_community_created
+  AFTER INSERT ON communities
+  FOR EACH ROW EXECUTE FUNCTION add_community_creator();
+
 -- ============================================
 -- ROW LEVEL SECURITY
 -- ============================================
@@ -996,6 +1699,19 @@ ALTER TABLE votes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE locations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE moments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE communities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE community_members ENABLE ROW LEVEL SECURITY;
+ALTER TABLE group_messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
+ALTER TABLE push_tokens ENABLE ROW LEVEL SECURITY;
+
+-- Helper: check if current user is admin
+CREATE OR REPLACE FUNCTION is_admin()
+RETURNS boolean AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM users WHERE id = auth.uid() AND role = 'admin'
+  );
+$$ LANGUAGE sql SECURITY DEFINER STABLE;
 
 -- users
 CREATE POLICY "Users are viewable by authenticated users"
@@ -1029,11 +1745,11 @@ CREATE POLICY "Users can create posts"
   ON posts FOR INSERT
   WITH CHECK (user_id = auth.uid());
 
-CREATE POLICY "Users can update own posts"
-  ON posts FOR UPDATE USING (user_id = auth.uid());
+CREATE POLICY "Users can update own posts or admin"
+  ON posts FOR UPDATE USING (user_id = auth.uid() OR is_admin());
 
-CREATE POLICY "Users can delete own posts"
-  ON posts FOR DELETE USING (user_id = auth.uid());
+CREATE POLICY "Users can delete own posts or admin"
+  ON posts FOR DELETE USING (user_id = auth.uid() OR is_admin());
 
 -- votes
 CREATE POLICY "Users can view own votes"
@@ -1057,6 +1773,9 @@ CREATE POLICY "Users can view own messages"
 CREATE POLICY "Users can send messages"
   ON messages FOR INSERT
   WITH CHECK (sender_id = auth.uid());
+
+CREATE POLICY "Admin can delete messages"
+  ON messages FOR DELETE USING (is_admin());
 
 -- locations (friends only)
 CREATE POLICY "Users can view own or friends' shared locations"
@@ -1096,18 +1815,141 @@ CREATE POLICY "Users can update own moments"
 CREATE POLICY "Users can delete own moments"
   ON moments FOR DELETE USING (user_id = auth.uid());
 
+-- communities
+CREATE POLICY "Communities are viewable by authenticated users"
+  ON communities FOR SELECT USING (auth.role() = 'authenticated');
+
+CREATE POLICY "Authenticated users can create communities"
+  ON communities FOR INSERT
+  WITH CHECK (created_by = auth.uid());
+
+CREATE POLICY "Creator or admin can update community"
+  ON communities FOR UPDATE
+  USING (created_by = auth.uid() OR is_admin());
+
+CREATE POLICY "Creator or admin can delete community"
+  ON communities FOR DELETE
+  USING (created_by = auth.uid() OR is_admin());
+
+-- community_members
+CREATE POLICY "Members can view community membership"
+  ON community_members FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM community_members cm
+      WHERE cm.community_id = community_members.community_id
+        AND cm.user_id = auth.uid()
+    )
+    OR is_admin()
+  );
+
+CREATE POLICY "Users can join communities"
+  ON community_members FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "Community admin can update members"
+  ON community_members FOR UPDATE
+  USING (
+    EXISTS (
+      SELECT 1 FROM community_members cm
+      WHERE cm.community_id = community_members.community_id
+        AND cm.user_id = auth.uid()
+        AND cm.role = 'admin'
+    )
+    OR is_admin()
+  );
+
+CREATE POLICY "Users can leave or admin can remove"
+  ON community_members FOR DELETE
+  USING (
+    user_id = auth.uid()
+    OR EXISTS (
+      SELECT 1 FROM community_members cm
+      WHERE cm.community_id = community_members.community_id
+        AND cm.user_id = auth.uid()
+        AND cm.role = 'admin'
+    )
+    OR is_admin()
+  );
+
+-- group_messages
+CREATE POLICY "Community members can view group messages"
+  ON group_messages FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1 FROM community_members
+      WHERE community_id = group_messages.community_id
+        AND user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Community members can send group messages"
+  ON group_messages FOR INSERT
+  WITH CHECK (
+    sender_id = auth.uid()
+    AND EXISTS (
+      SELECT 1 FROM community_members
+      WHERE community_id = group_messages.community_id
+        AND user_id = auth.uid()
+    )
+  );
+
+CREATE POLICY "Sender or admin can delete group messages"
+  ON group_messages FOR DELETE
+  USING (sender_id = auth.uid() OR is_admin());
+
+-- reports
+CREATE POLICY "Users can create reports"
+  ON reports FOR INSERT
+  WITH CHECK (reporter_id = auth.uid());
+
+CREATE POLICY "Users view own reports, admins view all"
+  ON reports FOR SELECT
+  USING (reporter_id = auth.uid() OR is_admin());
+
+CREATE POLICY "Admins can update reports"
+  ON reports FOR UPDATE USING (is_admin());
+
+CREATE POLICY "Admins can delete reports"
+  ON reports FOR DELETE USING (is_admin());
+
+-- push_tokens
+CREATE POLICY "Users can view own push tokens"
+  ON push_tokens FOR SELECT USING (user_id = auth.uid());
+
+CREATE POLICY "Users can register push tokens"
+  ON push_tokens FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "Users can update own push tokens"
+  ON push_tokens FOR UPDATE USING (user_id = auth.uid());
+
+CREATE POLICY "Users can delete own push tokens"
+  ON push_tokens FOR DELETE USING (user_id = auth.uid());
+
 -- ============================================
 -- REALTIME
 -- ============================================
 
--- Enable realtime for messages and locations
 ALTER PUBLICATION supabase_realtime ADD TABLE messages;
 ALTER PUBLICATION supabase_realtime ADD TABLE locations;
+ALTER PUBLICATION supabase_realtime ADD TABLE group_messages;
+
+-- ============================================
+-- STORAGE
+-- ============================================
+
+-- Run in Supabase dashboard or via API:
+-- CREATE BUCKET post-images (public: true)
+-- Storage policies:
+--   INSERT: auth.uid()::text = (storage.foldername(name))[1]
+--   SELECT: true (public)
+--   DELETE: auth.uid()::text = (storage.foldername(name))[1] OR is_admin()
 ```
 
 ---
 
-## 16. TypeScript Types
+## 20. TypeScript Types
 
 ```typescript
 // src/types/index.ts
@@ -1115,6 +1957,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE locations;
 export interface User {
   id: string;
   username: string;
+  role: 'user' | 'admin';
   created_at: string;
 }
 
@@ -1132,10 +1975,10 @@ export interface Post {
   lat: number;
   lng: number;
   text: string;
+  image_url: string | null;
   is_anonymous: boolean;
   score: number;
   created_at: string;
-  // Joined
   username?: string;
 }
 
@@ -1160,7 +2003,6 @@ export interface UserLocation {
   lng: number;
   sharing: boolean;
   updated_at: string;
-  // Joined
   username?: string;
 }
 
@@ -1173,6 +2015,55 @@ export interface Moment {
   created_at: string;
 }
 
+export interface Community {
+  id: string;
+  name: string;
+  description: string | null;
+  created_by: string;
+  lat: number | null;
+  lng: number | null;
+  created_at: string;
+  member_count?: number;
+}
+
+export interface CommunityMember {
+  id: string;
+  community_id: string;
+  user_id: string;
+  role: 'member' | 'admin';
+  joined_at: string;
+  username?: string;
+}
+
+export interface GroupMessage {
+  id: string;
+  community_id: string;
+  sender_id: string;
+  text: string;
+  created_at: string;
+  sender_username?: string;
+}
+
+export interface Report {
+  id: string;
+  reporter_id: string;
+  target_type: 'post' | 'message' | 'user' | 'group_message';
+  target_id: string;
+  reason: string;
+  status: 'pending' | 'reviewed' | 'resolved';
+  reviewed_by: string | null;
+  created_at: string;
+  reporter_username?: string;
+}
+
+export interface PushToken {
+  id: string;
+  user_id: string;
+  token: string;
+  platform: 'ios' | 'android';
+  created_at: string;
+}
+
 export type SortMode = 'recent' | 'top';
 
 export interface Conversation {
@@ -1181,27 +2072,40 @@ export interface Conversation {
   last_message: string;
   last_message_at: string;
 }
+
+export interface GroupConversation {
+  community_id: string;
+  community_name: string;
+  last_message: string;
+  last_sender_username: string;
+  last_message_at: string;
+}
 ```
 
 ---
 
-## 17. API Surface (Service Layer)
+## 21. API Surface (Service Layer)
 
-Each service module exports async functions that wrap Supabase queries. No REST API is built — the client talks directly to Supabase.
+Each service module exports async functions that wrap Supabase queries. No REST API is built — the client talks directly to Supabase (except Edge Functions for push notifications and admin actions).
 
-| Module          | Functions                                                    |
-| --------------- | ------------------------------------------------------------ |
-| `auth.ts`       | `signUp`, `signIn`, `signOut`, `getSession`                 |
-| `posts.ts`      | `createPost`, `fetchPostsInBounds`, `fetchPostsInRadius`    |
-| `votes.ts`      | `vote`, `getUserVotes`                                       |
-| `friends.ts`    | `sendRequest`, `acceptRequest`, `declineRequest`, `getFriends`, `searchUsers` |
-| `messages.ts`   | `sendMessage`, `fetchConversation`, `fetchConversationList`  |
-| `locations.ts`  | `upsertLocation`, `fetchFriendLocations`, `toggleSharing`    |
-| `moments.ts`    | `createMoment`, `fetchMoments`, `deleteMoment`               |
+| Module              | Functions                                                    |
+| ------------------- | ------------------------------------------------------------ |
+| `auth.ts`           | `signUp`, `signIn`, `signOut`, `getSession`                 |
+| `posts.ts`          | `createPost`, `fetchPostsInBounds`, `fetchPostsInRadius`    |
+| `votes.ts`          | `vote`, `getUserVotes`                                       |
+| `friends.ts`        | `sendRequest`, `acceptRequest`, `declineRequest`, `getFriends`, `searchUsers` |
+| `messages.ts`       | `sendMessage`, `fetchConversation`, `fetchConversationList`  |
+| `groupMessages.ts`  | `sendGroupMessage`, `fetchGroupMessages`, `fetchGroupConversationList` |
+| `communities.ts`    | `createCommunity`, `fetchCommunities`, `joinCommunity`, `leaveCommunity`, `fetchMembers`, `removeMember`, `deleteCommunity` |
+| `locations.ts`      | `upsertLocation`, `fetchFriendLocations`, `toggleSharing`    |
+| `moments.ts`        | `createMoment`, `fetchMoments`, `deleteMoment`               |
+| `media.ts`          | `uploadImage`, `deleteImage`                                 |
+| `notifications.ts`  | `registerPushToken`, `removePushToken`                       |
+| `admin.ts`          | `fetchReports`, `resolveReport`, `removeContent`, `banUser`, `fetchStats` |
 
 ---
 
-## 18. Performance Considerations
+## 22. Performance Considerations
 
 ### 18.1 Map Post Loading
 
@@ -1229,60 +2133,79 @@ Each service module exports async functions that wrap Supabase queries. No REST 
 
 ---
 
-## 19. Error Handling Strategy
+## 23. Error Handling Strategy
 
-| Scenario              | Handling                                         |
-| --------------------- | ------------------------------------------------ |
-| No location permission | Show full-screen prompt to enable in settings   |
-| Network failure        | Show inline error banner, retry button           |
-| Auth token expired     | Supabase auto-refreshes; if fails, redirect to login |
-| Empty feed             | Show "No posts nearby" placeholder               |
-| Empty chat list        | Show "Start a conversation" CTA                  |
-| Failed post creation   | Show toast error, keep text in input              |
+| Scenario                | Handling                                         |
+| ----------------------- | ------------------------------------------------ |
+| No location permission  | Show full-screen prompt to enable in settings    |
+| Network failure         | Show inline error banner, retry button           |
+| Auth token expired      | Supabase auto-refreshes; if fails, redirect to login |
+| Empty feed              | Show "No posts nearby" placeholder               |
+| Empty chat list         | Show "Start a conversation" CTA                  |
+| Failed post creation    | Show toast error, keep text in input             |
+| Image upload failure    | Show toast error, allow retry without re-picking |
+| Push permission denied  | App works without notifs; show banner suggesting enable |
+| Community not found     | Show "Community deleted" and navigate back       |
+| Report submission error | Show toast error, keep reason in input           |
+| Admin action failure    | Show error toast with reason, no state change    |
 
 ---
 
-## 20. Future Considerations (Post-MVP)
+## 24. Future Considerations (Post-MVP)
 
 These are explicitly **out of scope** but noted for awareness:
 
-- **Push notifications** via Expo Notifications + Supabase Edge Functions
 - **Background location** for persistent sharing
-- **Media attachments** on posts (images via Supabase Storage)
-- **Group chats**
+- **Video uploads** on posts
 - **Post expiry** (auto-delete after 24h)
 - **Geofenced campus boundaries**
-- **Moderation tools** (report, block, content filtering)
 - **PostGIS** for proper spatial indexing (replaces bounding box queries)
 - **Unread message count** badge on Chat tab
+- **Muting/blocking** users at the user level
+- **Community roles** beyond member/admin (e.g., moderator)
+- **Threaded replies** on posts
+- **OAuth providers** (Google, Apple Sign-In)
 
 ---
 
-## 21. Development Milestones
+## 25. Development Milestones
 
-| Phase | Scope                                     | Est. Effort |
-| ----- | ----------------------------------------- | ----------- |
-| 1     | Project setup, auth, navigation shell     | 1 day       |
-| 2     | Database migration, Supabase config, RLS  | 0.5 day     |
-| 3     | Map screen + post markers                 | 1 day       |
-| 4     | Feed screen + voting                      | 1 day       |
-| 5     | Create post flow                          | 0.5 day     |
-| 6     | Friends system + location sharing         | 1 day       |
-| 7     | Chat (list + 1:1 realtime)                | 1 day       |
-| 8     | Profile + moments                         | 0.5 day     |
-| 9     | Polish, error handling, testing           | 1 day       |
-|       | **Total**                                 | **~7 days** |
+| Phase | Scope                                          | Est. Effort |
+| ----- | ---------------------------------------------- | ----------- |
+| 1     | Project setup, auth, navigation shell          | 1 day       |
+| 2     | Database migration, Supabase config, RLS       | 1 day       |
+| 3     | Map screen + post markers                      | 1 day       |
+| 4     | Feed screen + voting + image display           | 1 day       |
+| 5     | Create post flow + image upload pipeline       | 1 day       |
+| 6     | Friends system + location sharing              | 1 day       |
+| 7     | 1:1 Chat (list + realtime)                     | 1 day       |
+| 8     | Communities + group chat                       | 1.5 days    |
+| 9     | Push notifications (tokens, Edge Function)     | 1 day       |
+| 10    | Admin dashboard + report system                | 1 day       |
+| 11    | Profile + moments                              | 0.5 day     |
+| 12    | Polish, error handling, testing                | 1.5 days    |
+|       | **Total**                                      | **~12 days** |
 
 ---
 
-## 22. Environment Variables
+## 26. Environment Variables
+
+**Client-side** (`.env` at project root, shipped in app):
 
 ```env
 EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...your-anon-key
 ```
 
-Stored in `.env` at project root. Accessed via `process.env.EXPO_PUBLIC_*` (Expo convention). The anon key is safe to ship in the client — RLS protects all data access.
+The anon key is safe to ship in the client — RLS protects all data access.
+
+**Server-side** (Edge Function environment, set in Supabase dashboard):
+
+```env
+SUPABASE_SERVICE_ROLE_KEY=eyJ...your-service-role-key
+```
+
+The service role key is used by Edge Functions only (push dispatch, admin ban). Never shipped to the client.
 
 ---
 
