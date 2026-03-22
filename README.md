@@ -1,0 +1,1 @@
+Ampd – A college-exclusive social app built around a live campus map. Sign up with .edu, see what’s happening nearby, and connect with verified students on your campus. Real-time feed, chat, communities, and dating in one app.
