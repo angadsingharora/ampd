@@ -532,6 +532,9 @@ RLS is **enabled on every table**. All policies use `auth.uid()` to identify the
 | `group_messages`    | Members of community                        | Members of community     | —                       | Sender or admin         |
 | `reports`           | Own reports or admin                        | Any authenticated user   | Admin only              | Admin only              |
 | `push_tokens`       | Own tokens only                             | `user_id = auth.uid()`   | Own tokens only         | Own tokens only         |
+| `dating_profiles`   | Active profiles, same campus                | `user_id = auth.uid()`   | Own profile only        | Own profile only        |
+| `dating_likes`      | Likes where user is liker or liked          | `liker_id = auth.uid()`  | —                       | Own likes only          |
+| `dating_matches`    | Matches involving auth.uid()                | Via trigger only         | —                       | —                       |
 
 ### 5.2 Locations RLS — Friends Only
 
@@ -1812,7 +1815,106 @@ const { count: reportCount } = await supabase.from('reports').select('*', { coun
 
 ---
 
-## 18. Security Considerations
+## 18. Dating Feature (Hinge-Style)
+
+### 18.1 Core Mechanic
+
+Ampd's dating feature is modeled after Hinge — users browse rich profile cards and like *specific content* (a particular photo or prompt answer), optionally with a comment. This creates more intentional connections than blind swiping.
+
+### 18.2 Dating Flow
+
+```
+User creates dating profile (photos + prompts + age)
+  → Profile appears in other same-campus users' dating feeds
+  → User A likes one of User B's prompts (with optional comment)
+  → User B sees the like in "Likes You" section
+  → User B views User A's full profile
+  → User B likes back → MATCH created via DB trigger
+  → Both receive push notification
+  → Match appears in MatchesScreen
+  → Tap match → opens 1:1 DM (existing chat infra)
+```
+
+### 18.3 Profile Visibility Rules
+
+- Only users on the **same campus** see each other's dating profiles
+- Only profiles with `active = true` appear in the feed
+- Users who have already been liked or matched are excluded from the feed
+- Users with no dating profile don't appear and don't see the dating feed (redirect to setup)
+
+### 18.4 Dating Feed Query
+
+```typescript
+const fetchDatingFeed = async (campus: string, userId: string) => {
+  const { data } = await supabase
+    .from('dating_profiles')
+    .select('*, users!inner(username, campus)')
+    .eq('users.campus', campus)
+    .eq('active', true)
+    .neq('user_id', userId)
+    .not('user_id', 'in', `(${alreadyLikedIds.join(',')})`)
+    .not('user_id', 'in', `(${matchedIds.join(',')})`)
+    .limit(20);
+
+  return data;
+};
+```
+
+### 18.5 Match Detection Trigger
+
+When a like is inserted, the `check_for_match` trigger checks if the liked person has already liked the liker. If so, a row is inserted into `dating_matches`. This is atomic — no race conditions.
+
+### 18.6 Dating RLS Policies
+
+```sql
+-- dating_profiles: same-campus users can see active profiles
+CREATE POLICY "View active profiles on same campus"
+ON dating_profiles FOR SELECT
+USING (
+  user_id = auth.uid()
+  OR (
+    active = true
+    AND EXISTS (
+      SELECT 1 FROM users u1, users u2
+      WHERE u1.id = dating_profiles.user_id
+        AND u2.id = auth.uid()
+        AND u1.campus = u2.campus
+    )
+  )
+);
+
+-- dating_likes: liker and liked can see
+CREATE POLICY "Users can see likes involving them"
+ON dating_likes FOR SELECT
+USING (liker_id = auth.uid() OR liked_id = auth.uid());
+
+-- dating_matches: both parties can see
+CREATE POLICY "Users can see own matches"
+ON dating_matches FOR SELECT
+USING (user_a = auth.uid() OR user_b = auth.uid());
+```
+
+### 18.7 Dating Photos Storage
+
+**Bucket:** `dating-photos` (public read, authenticated write)
+
+Same pattern as `post-images`:
+- Path: `dating-photos/{userId}/{uuid}.jpg`
+- INSERT restricted to own folder
+- SELECT public
+- DELETE restricted to owner or admin
+
+### 18.8 Privacy Considerations
+
+- Dating profiles are **opt-in** — you must explicitly create one
+- The `active` toggle allows pausing without profile deletion
+- Likes are not visible to anyone except the liker and the liked person
+- A "skip" is silent — the skipped person never knows
+- Unmatching (deleting a match) deletes the `dating_matches` row and removes DM access
+
+---
+
+## 19. Security Considerations
 
 ### 14.1 Anonymous Posts
 
@@ -1832,7 +1934,7 @@ Out of scope for MVP. If abuse occurs, Supabase's built-in rate limiting on the 
 
 ---
 
-## 19. SQL Migration
+## 20. SQL Migration
 
 The full DDL for the initial migration:
 
@@ -1849,6 +1951,7 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE users (
   id         uuid PRIMARY KEY DEFAULT auth.uid(),
   username   text UNIQUE NOT NULL CHECK (char_length(username) BETWEEN 3 AND 20),
+  campus     text NOT NULL,
   role       text NOT NULL DEFAULT 'user' CHECK (role IN ('user', 'admin')),
   created_at timestamptz DEFAULT now()
 );
@@ -1955,6 +2058,39 @@ CREATE TABLE push_tokens (
   UNIQUE (user_id, token)
 );
 
+CREATE TABLE dating_profiles (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    uuid UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  photos     text[] NOT NULL CHECK (array_length(photos, 1) BETWEEN 2 AND 6),
+  prompts    jsonb NOT NULL,
+  age        smallint NOT NULL CHECK (age >= 18),
+  bio        text CHECK (char_length(bio) <= 300),
+  active     boolean DEFAULT true,
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE dating_likes (
+  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  liker_id            uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  liked_id            uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  liked_content_type  text NOT NULL CHECK (liked_content_type IN ('photo', 'prompt')),
+  liked_content_index smallint NOT NULL,
+  comment             text CHECK (char_length(comment) <= 200),
+  created_at          timestamptz DEFAULT now(),
+  UNIQUE (liker_id, liked_id),
+  CHECK (liker_id <> liked_id)
+);
+
+CREATE TABLE dating_matches (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_a     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_b     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz DEFAULT now(),
+  UNIQUE (LEAST(user_a, user_b), GREATEST(user_a, user_b)),
+  CHECK (user_a <> user_b)
+);
+
 -- ============================================
 -- INDEXES
 -- ============================================
@@ -1973,17 +2109,33 @@ CREATE INDEX idx_community_members_community ON community_members (community_id)
 CREATE INDEX idx_group_messages_community ON group_messages (community_id, created_at DESC);
 CREATE INDEX idx_reports_status ON reports (status, created_at);
 CREATE INDEX idx_push_tokens_user ON push_tokens (user_id);
+CREATE INDEX idx_dating_profiles_campus ON dating_profiles (user_id);
+CREATE INDEX idx_dating_likes_liker ON dating_likes (liker_id);
+CREATE INDEX idx_dating_likes_liked ON dating_likes (liked_id);
+CREATE INDEX idx_dating_matches_users ON dating_matches (user_a, user_b);
+CREATE INDEX idx_users_campus ON users (campus);
 
 -- ============================================
 -- TRIGGERS
 -- ============================================
 
--- Auto-create user profile on sign-up
+-- Auto-create user profile on sign-up with campus extraction
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  email_domain text;
 BEGIN
-  INSERT INTO public.users (id, username)
-  VALUES (NEW.id, NEW.raw_user_meta_data->>'username');
+  email_domain := split_part(NEW.email, '@', 2);
+  IF email_domain LIKE '%.%.edu' THEN
+    email_domain := substring(email_domain from '[^.]+\.[^.]+$');
+  END IF;
+
+  INSERT INTO public.users (id, username, campus)
+  VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'username',
+    email_domain
+  );
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -2022,6 +2174,26 @@ CREATE TRIGGER on_community_created
   AFTER INSERT ON communities
   FOR EACH ROW EXECUTE FUNCTION add_community_creator();
 
+-- Auto-create match when mutual like detected
+CREATE OR REPLACE FUNCTION check_for_match()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM dating_likes
+    WHERE liker_id = NEW.liked_id AND liked_id = NEW.liker_id
+  ) THEN
+    INSERT INTO dating_matches (user_a, user_b)
+    VALUES (LEAST(NEW.liker_id, NEW.liked_id), GREATEST(NEW.liker_id, NEW.liked_id))
+    ON CONFLICT DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE TRIGGER on_dating_like
+  AFTER INSERT ON dating_likes
+  FOR EACH ROW EXECUTE FUNCTION check_for_match();
+
 -- ============================================
 -- ROW LEVEL SECURITY
 -- ============================================
@@ -2038,6 +2210,9 @@ ALTER TABLE community_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE group_messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE push_tokens ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dating_profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dating_likes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dating_matches ENABLE ROW LEVEL SECURITY;
 
 -- Helper: check if current user is admin
 CREATE OR REPLACE FUNCTION is_admin()
@@ -2261,6 +2436,53 @@ CREATE POLICY "Users can update own push tokens"
 CREATE POLICY "Users can delete own push tokens"
   ON push_tokens FOR DELETE USING (user_id = auth.uid());
 
+-- dating_profiles
+CREATE POLICY "View active profiles on same campus"
+  ON dating_profiles FOR SELECT
+  USING (
+    user_id = auth.uid()
+    OR (
+      active = true
+      AND EXISTS (
+        SELECT 1 FROM users u1, users u2
+        WHERE u1.id = dating_profiles.user_id
+          AND u2.id = auth.uid()
+          AND u1.campus = u2.campus
+      )
+    )
+  );
+
+CREATE POLICY "Users can create own dating profile"
+  ON dating_profiles FOR INSERT
+  WITH CHECK (user_id = auth.uid());
+
+CREATE POLICY "Users can update own dating profile"
+  ON dating_profiles FOR UPDATE USING (user_id = auth.uid());
+
+CREATE POLICY "Users can delete own dating profile"
+  ON dating_profiles FOR DELETE USING (user_id = auth.uid());
+
+-- dating_likes
+CREATE POLICY "Users can see likes involving them"
+  ON dating_likes FOR SELECT
+  USING (liker_id = auth.uid() OR liked_id = auth.uid());
+
+CREATE POLICY "Users can create likes"
+  ON dating_likes FOR INSERT
+  WITH CHECK (liker_id = auth.uid());
+
+CREATE POLICY "Users can delete own likes"
+  ON dating_likes FOR DELETE USING (liker_id = auth.uid());
+
+-- dating_matches
+CREATE POLICY "Users can see own matches"
+  ON dating_matches FOR SELECT
+  USING (user_a = auth.uid() OR user_b = auth.uid());
+
+CREATE POLICY "Users can delete own matches (unmatch)"
+  ON dating_matches FOR DELETE
+  USING (user_a = auth.uid() OR user_b = auth.uid());
+
 -- ============================================
 -- REALTIME
 -- ============================================
@@ -2274,8 +2496,12 @@ ALTER PUBLICATION supabase_realtime ADD TABLE group_messages;
 -- ============================================
 
 -- Run in Supabase dashboard or via API:
--- CREATE BUCKET post-images (public: true)
--- Storage policies:
+-- BUCKET: post-images (public: true)
+--   INSERT: auth.uid()::text = (storage.foldername(name))[1]
+--   SELECT: true (public)
+--   DELETE: auth.uid()::text = (storage.foldername(name))[1] OR is_admin()
+--
+-- BUCKET: dating-photos (public: true)
 --   INSERT: auth.uid()::text = (storage.foldername(name))[1]
 --   SELECT: true (public)
 --   DELETE: auth.uid()::text = (storage.foldername(name))[1] OR is_admin()
@@ -2283,7 +2509,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE group_messages;
 
 ---
 
-## 20. TypeScript Types
+## 21. TypeScript Types
 
 ```typescript
 // src/types/index.ts
@@ -2291,6 +2517,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE group_messages;
 export interface User {
   id: string;
   username: string;
+  campus: string;
   role: 'user' | 'admin';
   created_at: string;
 }
@@ -2414,11 +2641,51 @@ export interface GroupConversation {
   last_sender_username: string;
   last_message_at: string;
 }
+
+export interface PromptAnswer {
+  prompt: string;
+  answer: string;
+}
+
+export interface DatingProfile {
+  id: string;
+  user_id: string;
+  photos: string[];
+  prompts: PromptAnswer[];
+  age: number;
+  bio: string | null;
+  active: boolean;
+  created_at: string;
+  updated_at: string;
+  username?: string;
+  campus?: string;
+}
+
+export interface DatingLike {
+  id: string;
+  liker_id: string;
+  liked_id: string;
+  liked_content_type: 'photo' | 'prompt';
+  liked_content_index: number;
+  comment: string | null;
+  created_at: string;
+  liker_username?: string;
+  liker_photos?: string[];
+}
+
+export interface DatingMatch {
+  id: string;
+  user_a: string;
+  user_b: string;
+  created_at: string;
+  partner_username?: string;
+  partner_photo?: string;
+}
 ```
 
 ---
 
-## 21. API Surface (Service Layer)
+## 22. API Surface (Service Layer)
 
 Each service module exports async functions that wrap Supabase queries. No REST API is built — the client talks directly to Supabase (except Edge Functions for push notifications and admin actions).
 
@@ -2436,38 +2703,46 @@ Each service module exports async functions that wrap Supabase queries. No REST 
 | `media.ts`          | `uploadImage`, `deleteImage`                                 |
 | `notifications.ts`  | `registerPushToken`, `removePushToken`                       |
 | `admin.ts`          | `fetchReports`, `resolveReport`, `removeContent`, `banUser`, `fetchStats` |
+| `dating.ts`         | `createProfile`, `updateProfile`, `fetchFeed`, `likeProfile`, `skipProfile`, `fetchLikesReceived`, `fetchMatches`, `unmatch` |
 
 ---
 
-## 22. Performance Considerations
+## 23. Performance Considerations
 
-### 18.1 Map Post Loading
+### 23.1 Map Post Loading
 
 - Posts are fetched by **bounding box**, not radius (cheaper query, no trig functions)
 - Capped at 50 posts per query
 - Re-fetch is **debounced** (500ms) on map pan/zoom
 - Markers are simple Views, not images, to reduce memory
 
-### 18.2 Location Updates
+### 23.2 Location Updates
 
 - Throttled to every 15 seconds OR 50 meters of movement
 - Uses `Accuracy.Balanced` (not `BestForNavigation`) to save battery
 - Upserts (not inserts) keep the table at exactly one row per user
 
-### 18.3 Chat
+### 23.3 Chat
 
 - Messages are fetched in pages of 50 (cursor-based pagination by `created_at`)
 - FlatList is inverted for chat UX
 - Realtime subscription avoids polling
 
-### 18.4 Feed
+### 23.4 Feed
 
 - Pull-to-refresh, no infinite scroll for MVP
 - Posts older than 24 hours could be filtered out in a future version
 
+### 23.5 Dating Feed
+
+- Profiles loaded in batches of 20
+- Already-liked and matched users are excluded via client-side ID list passed to query
+- Photos are lazy-loaded as the user scrolls through the card
+- Campus-scoped queries reduce result set size naturally
+
 ---
 
-## 23. Error Handling Strategy
+## 24. Error Handling Strategy
 
 | Scenario                | Handling                                         |
 | ----------------------- | ------------------------------------------------ |
@@ -2482,13 +2757,19 @@ Each service module exports async functions that wrap Supabase queries. No REST 
 | Community not found     | Show "Community deleted" and navigate back       |
 | Report submission error | Show toast error, keep reason in input           |
 | Admin action failure    | Show error toast with reason, no state change    |
+| Non-.edu email          | Reject at sign-up with "Use your college email"  |
+| Email not verified      | Show VerifyEmailScreen with resend option         |
+| No dating profile       | Redirect to DatingProfileSetup with CTA          |
+| Dating photo upload fail| Show toast, keep other photos, allow retry        |
+| No more profiles        | Show "You've seen everyone nearby" placeholder    |
 
 ---
 
-## 24. Future Considerations (Post-MVP)
+## 25. Future Considerations (Post-MVP)
 
 These are explicitly **out of scope** but noted for awareness:
 
+- **Multi-campus support** with cross-campus opt-in and campus directory
 - **Background location** for persistent sharing
 - **Video uploads** on posts
 - **Post expiry** (auto-delete after 24h)
@@ -2499,30 +2780,37 @@ These are explicitly **out of scope** but noted for awareness:
 - **Community roles** beyond member/admin (e.g., moderator)
 - **Threaded replies** on posts
 - **OAuth providers** (Google, Apple Sign-In)
+- **Dating compatibility scoring** via ML
+- **Dating dealbreakers/preferences** (filters for age, interests, etc.)
+- **Rose/super-like** premium dating interactions
+- **Campus admin portal** (web-based) for school officials
 
 ---
 
-## 25. Development Milestones
+## 26. Development Milestones
 
-| Phase | Scope                                          | Est. Effort |
-| ----- | ---------------------------------------------- | ----------- |
-| 1     | Project setup, auth, navigation shell          | 1 day       |
-| 2     | Database migration, Supabase config, RLS       | 1 day       |
-| 3     | Map screen + post markers                      | 1 day       |
-| 4     | Feed screen + voting + image display           | 1 day       |
-| 5     | Create post flow + image upload pipeline       | 1 day       |
-| 6     | Friends system + location sharing              | 1 day       |
-| 7     | 1:1 Chat (list + realtime)                     | 1 day       |
-| 8     | Communities + group chat                       | 1.5 days    |
-| 9     | Push notifications (tokens, Edge Function)     | 1 day       |
-| 10    | Admin dashboard + report system                | 1 day       |
-| 11    | Profile + moments                              | 0.5 day     |
-| 12    | Polish, error handling, testing                | 1.5 days    |
-|       | **Total**                                      | **~12 days** |
+| Phase | Scope                                              | Est. Effort |
+| ----- | -------------------------------------------------- | ----------- |
+| 1     | Project setup, .edu auth, email verification flow | 1.5 days    |
+| 2     | Database migration, Supabase config, RLS           | 1 day       |
+| 3     | Map screen + post markers + campus scoping         | 1 day       |
+| 4     | Feed screen + voting + image display               | 1 day       |
+| 5     | Create post flow + image upload pipeline           | 1 day       |
+| 6     | Friends system + location sharing                  | 1 day       |
+| 7     | 1:1 Chat (list + realtime)                         | 1 day       |
+| 8     | Communities + group chat                           | 1.5 days    |
+| 9     | Dating: profile setup + photo uploads              | 1 day       |
+| 10    | Dating: feed + likes + match trigger               | 1.5 days    |
+| 11    | Dating: matches screen + chat integration          | 1 day       |
+| 12    | Push notifications (tokens, Edge Function)         | 1 day       |
+| 13    | Admin dashboard + report system                    | 1 day       |
+| 14    | Profile + moments                                  | 0.5 day     |
+| 15    | Polish, error handling, testing                    | 2 days      |
+|       | **Total**                                          | **~16 days** |
 
 ---
 
-## 26. Environment Variables
+## 27. Environment Variables
 
 **Client-side** (`.env` at project root, shipped in app):
 
