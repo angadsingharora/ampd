@@ -1,6 +1,6 @@
 # Ampd — Design Document
 
-**Version:** 2.0
+**Version:** 3.0
 **Date:** March 21, 2026
 **Status:** MVP
 
@@ -8,20 +8,32 @@
 
 ## 1. Product Overview
 
-Ampd is a mobile-first campus social app built around a live map of campus activity. Users open the app to instantly see where people are, what's happening nearby, and interact in real time. Everything revolves around **location + real-time interaction**.
+Ampd is a **college-exclusive**, mobile-first campus social app built around a live map of campus activity. The app is locked to verified students of a specific college — only `.edu` email addresses are accepted at sign-up, and email verification is required before access is granted. This creates a trusted, closed-network environment where every user is a real student on your campus.
+
+Users open the app to instantly see where people are, what's happening nearby, interact in real time, and meet new people. Everything revolves around **location + real-time interaction + campus identity**.
 
 ### 1.1 Core User Flow
 
 ```
-Open App → See live map with friends & posts → Tap post or drop one →
-Browse nearby feed → Chat with a friend → Pin a private moment
+Sign up with .edu email → Verify → See live map with friends & posts →
+Tap post or drop one → Browse nearby feed → Chat with a friend →
+Pin a private moment → Swipe through dating profiles → Match & connect
 ```
 
-### 1.2 What Ampd Is NOT (MVP Constraints)
+### 1.2 College Exclusivity
+
+- **Sign-up requires a `.edu` email address** — no personal Gmail, no outsiders
+- Supabase Auth enforces email confirmation before the account is active
+- The `users.campus` field identifies which school a user belongs to (derived from the email domain, e.g., `nyu.edu` → `"NYU"`)
+- All content (posts, feed, communities, dating) is **scoped to users on the same campus**
+- Future: multi-campus support with cross-campus opt-in
+
+### 1.3 What Ampd Is NOT (MVP Constraints)
 
 - No stories, reels, or ephemeral content
-- No third-party OAuth (email/password only for MVP)
+- No third-party OAuth (.edu email/password only for MVP)
 - No video uploads (images only)
+- No cross-campus interactions (single campus per deployment)
 
 ---
 
@@ -126,12 +138,16 @@ Ampd/
 │   │   ├── CommunityListScreen.tsx # Browse/search communities
 │   │   ├── CommunityScreen.tsx     # Single community detail + feed
 │   │   ├── CreateCommunityScreen.tsx # Create new community
+│   │   ├── DatingFeedScreen.tsx    # Hinge-style swipe/like cards
+│   │   ├── DatingProfileSetup.tsx  # Create/edit dating profile
+│   │   ├── MatchesScreen.tsx       # View matches + start chat
 │   │   ├── ProfileScreen.tsx       # User profile + settings
 │   │   ├── CreatePostScreen.tsx    # Drop a post (text + optional image)
 │   │   ├── MomentsScreen.tsx       # Private pins
 │   │   ├── AdminScreen.tsx         # Admin dashboard (admin-only)
 │   │   ├── LoginScreen.tsx         # Auth: login
-│   │   └── SignUpScreen.tsx        # Auth: register
+│   │   ├── SignUpScreen.tsx        # Auth: register
+│   │   └── VerifyEmailScreen.tsx   # .edu confirmation wait screen
 │   │
 │   ├── components/
 │   │   ├── PostCard.tsx            # Post display in feed (text + image)
@@ -142,7 +158,10 @@ Ampd/
 │   │   ├── FriendListItem.tsx      # Friend row component
 │   │   ├── CommunityCard.tsx       # Community list item
 │   │   ├── ImagePreview.tsx        # Thumbnail for post images
-│   │   └── ReportButton.tsx        # Flag content for review
+│   │   ├── ReportButton.tsx        # Flag content for review
+│   │   ├── DatingCard.tsx          # Hinge-style profile card
+│   │   ├── PromptAnswer.tsx        # Dating prompt + answer display
+│   │   └── MatchCard.tsx           # Match list item
 │   │
 │   ├── services/
 │   │   ├── supabase.ts             # Supabase client init
@@ -157,7 +176,8 @@ Ampd/
 │   │   ├── moments.ts              # Private pin CRUD
 │   │   ├── media.ts                # Image upload to Supabase Storage
 │   │   ├── notifications.ts        # Push token registration + sending
-│   │   └── admin.ts                # Moderation actions (ban, remove, reports)
+│   │   ├── admin.ts                # Moderation actions (ban, remove, reports)
+│   │   └── dating.ts               # Dating profile, likes, matches
 │   │
 │   ├── hooks/
 │   │   ├── useAuth.ts              # Auth state hook
@@ -238,10 +258,11 @@ All tables live in the `public` schema on Supabase Postgres. The `locations` tab
 | ------------ | ------------- | ------------------------------------ |
 | `id`         | `uuid`        | PK, default `auth.uid()`            |
 | `username`   | `text`        | UNIQUE, NOT NULL, 3–20 chars         |
+| `campus`     | `text`        | NOT NULL (derived from .edu email domain) |
 | `role`       | `text`        | `'user'` / `'admin'`, default `'user'` |
 | `created_at` | `timestamptz` | default `now()`                      |
 
-Maps 1:1 with `auth.users`. Created via a trigger on sign-up. The `role` field controls admin access (see Section 17).
+Maps 1:1 with `auth.users`. Created via a trigger on sign-up. The `campus` field is extracted from the user's .edu email domain (e.g., `nyu.edu`). The `role` field controls admin access (see Section 17).
 
 #### `friendships`
 
@@ -586,13 +607,37 @@ supabase
 
 ## 7. Authentication Flow
 
-### 7.1 Sign-Up
+### 7.1 .edu Email Gating
+
+Ampd only allows sign-ups from `.edu` email addresses. This is enforced at two levels:
+
+**Client-side validation:**
+```typescript
+const isEduEmail = (email: string): boolean =>
+  email.trim().toLowerCase().endsWith('.edu');
+```
+
+**Server-side enforcement:** Supabase Auth is configured with:
+- `GOTRUE_MAILER_AUTOCONFIRM = false` — email confirmation required
+- A database trigger extracts the campus domain from the email and stores it
+
+The campus is derived from the email domain:
+```
+alice@students.nyu.edu → campus = "nyu.edu" → display = "NYU"
+bob@umich.edu          → campus = "umich.edu" → display = "UMich"
+```
+
+### 7.2 Sign-Up
 
 ```
-User enters email + password + username
-  → supabase.auth.signUp({ email, password })
-  → DB trigger creates row in public.users with auth.uid() + username
-  → User is auto-logged in
+User enters .edu email + password + username
+  → Client validates .edu suffix (reject if not)
+  → supabase.auth.signUp({ email, password, options: { data: { username } } })
+  → Supabase sends confirmation email to the .edu address
+  → Show "Check your college email" screen
+  → User clicks confirmation link
+  → DB trigger creates row in public.users with auth.uid() + username + campus
+  → User is now verified and can log in
   → Navigate to Map tab
 ```
 
@@ -601,9 +646,21 @@ The trigger that creates the user profile:
 ```sql
 CREATE OR REPLACE FUNCTION handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  email_domain text;
 BEGIN
-  INSERT INTO public.users (id, username)
-  VALUES (NEW.id, NEW.raw_user_meta_data->>'username');
+  email_domain := split_part(NEW.email, '@', 2);
+  -- Normalize subdomains: students.nyu.edu → nyu.edu
+  IF email_domain LIKE '%.%.edu' THEN
+    email_domain := substring(email_domain from '[^.]+\.[^.]+$');
+  END IF;
+
+  INSERT INTO public.users (id, username, campus)
+  VALUES (
+    NEW.id,
+    NEW.raw_user_meta_data->>'username',
+    email_domain
+  );
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
@@ -613,16 +670,17 @@ CREATE TRIGGER on_auth_user_created
   FOR EACH ROW EXECUTE FUNCTION handle_new_user();
 ```
 
-### 7.2 Sign-In
+### 7.3 Sign-In
 
 ```
-User enters email + password
+User enters .edu email + password
   → supabase.auth.signInWithPassword({ email, password })
-  → Session stored in expo-secure-store
+  → If email not confirmed → show "Check your email" prompt
+  → If confirmed → session stored in expo-secure-store
   → Navigate to Map tab
 ```
 
-### 7.3 Session Persistence
+### 7.4 Session Persistence
 
 On app launch:
 1. Check `expo-secure-store` for existing session
@@ -630,7 +688,7 @@ On app launch:
 3. If expired, Supabase auto-refreshes the JWT
 4. If no session, show LoginScreen
 
-### 7.4 Auth Context
+### 7.5 Auth Context
 
 ```typescript
 interface AuthContextType {
@@ -643,7 +701,23 @@ interface AuthContextType {
 }
 ```
 
-Wraps the entire app. All screens check `user` to gate access.
+Wraps the entire app. All screens check `user` to gate access. The `user.campus` field is used to scope all queries to same-campus data.
+
+### 7.6 Campus Scoping
+
+All data queries include a campus filter to ensure users only see content from their own school:
+
+```typescript
+// Fetch posts only from same campus
+const { data } = await supabase
+  .from('posts')
+  .select('*, users!inner(campus)')
+  .eq('users.campus', currentUser.campus)
+  .gte('lat', bounds.south)
+  .lte('lat', bounds.north);
+```
+
+This pattern applies to: posts, feed, communities, dating profiles, and user search. Friends and DMs are not campus-scoped (a user could befriend someone from another campus if they know their username — but in practice all users are same-campus in MVP).
 
 ---
 
@@ -1022,6 +1096,176 @@ const fetchConversation = async (otherUserId: string) => {
 └─────────────────────────────────┘
 ```
 
+### 8.13 Dating Feed Screen (Hinge-Style)
+
+**Purpose:** Discover and like other students on campus. Inspired by Hinge — users see rich profile cards and interact with specific content (prompts, photos), not just swipe left/right blindly.
+
+**Access:** Only available to users who have completed their dating profile. If no profile exists, show a CTA to create one.
+
+**Card layout:**
+
+```
+┌─────────────────────────────────┐
+│                                 │
+│     [Profile Photo 1]           │
+│     (full-width, 4:5 ratio)     │
+│                                 │
+│  Alice, 20                      │
+│  📍 0.4 mi away                 │
+│                                 │
+├─────────────────────────────────┤
+│  "What I'm looking for..."      │
+│  "Someone who can beat me at    │
+│   Mario Kart"                   │
+│                          [♥]    │
+├─────────────────────────────────┤
+│                                 │
+│     [Profile Photo 2]           │
+│                                 │
+├─────────────────────────────────┤
+│  "My simple pleasures..."       │
+│  "Late-night ramen runs and     │
+│   studying in the park"         │
+│                          [♥]    │
+├─────────────────────────────────┤
+│                                 │
+│     [Profile Photo 3]           │
+│                                 │
+│  ┌─────────┐  ┌───────────┐    │
+│  │  Skip   │  │   Like    │    │
+│  └─────────┘  └───────────┘    │
+└─────────────────────────────────┘
+```
+
+**Behavior:**
+- Cards are scrollable vertically (Hinge-style, not Tinder swipe)
+- Each card shows: photos (up to 6), prompt answers (3 required), name, age, distance
+- Users can **like a specific prompt answer or photo** by tapping the heart icon on that section (Hinge's core mechanic — liking specific content, not the whole person)
+- Users can optionally attach a comment to their like ("I also love late-night ramen!")
+- "Skip" passes without notification; "Like" sends a like to that user
+- Cards are filtered to: same campus, not already liked/matched, dating profile active
+
+**Algorithm (MVP):**
+- Simple shuffle of all eligible profiles, weighted by proximity (closer = more likely to appear first)
+- No ML or compatibility scoring for MVP
+
+### 8.14 Dating Profile Setup Screen
+
+**Purpose:** Create or edit the user's dating profile.
+
+**Required fields:**
+- Photos (minimum 2, maximum 6) — uploaded to Supabase Storage `dating-photos` bucket
+- 3 prompt answers (selected from a preset list of prompts)
+- Age (number, validated 18+)
+- Bio (optional, max 300 chars)
+
+**Preset prompts (examples):**
+- "A shower thought I had recently..."
+- "My simple pleasures..."
+- "What I'm looking for..."
+- "I'm convinced that..."
+- "The way to win me over is..."
+- "My most controversial opinion is..."
+- "I go crazy for..."
+- "Typical Sunday for me..."
+
+The prompt list is stored client-side as a constant (no DB table needed for MVP).
+
+**Profile card:**
+
+```
+┌─────────────────────────────────┐
+│  Edit Dating Profile            │
+│                                 │
+│  Photos (2–6):                  │
+│  [📷] [📷] [📷] [+]            │
+│                                 │
+│  Age: [20]                      │
+│  Bio: [optional text...]        │
+│                                 │
+│  Prompt 1: [dropdown]           │
+│  Answer:   [text input]         │
+│                                 │
+│  Prompt 2: [dropdown]           │
+│  Answer:   [text input]         │
+│                                 │
+│  Prompt 3: [dropdown]           │
+│  Answer:   [text input]         │
+│                                 │
+│  Dating active: [toggle]        │
+│                                 │
+│  [Save Profile]                 │
+└─────────────────────────────────┘
+```
+
+The `active` toggle lets users pause dating without deleting their profile.
+
+### 8.15 Matches Screen
+
+**Purpose:** View mutual matches and start conversations.
+
+**Sections:**
+
+1. **Likes You** — people who liked your profile (you haven't responded yet)
+   - Shows blurred preview until you view the full card
+   - Tap to see their profile → Like back (= match) or Skip
+
+2. **Matches** — mutual likes
+   - Shows name, photo, and when you matched
+   - Tap to open a 1:1 DM (uses the existing ChatScreen)
+
+**Layout:**
+
+```
+┌─────────────────────────────────┐
+│  Likes You (3)                  │
+│  ┌─────┐ ┌─────┐ ┌─────┐      │
+│  │blur │ │blur │ │blur │      │
+│  │photo│ │photo│ │photo│      │
+│  └─────┘ └─────┘ └─────┘      │
+│                                 │
+│  Matches (5)                    │
+│  ┌─────────────────────────┐    │
+│  │ 📷 Alice     Matched 2h │    │
+│  │    "Send a message!"     │    │
+│  └─────────────────────────┘    │
+│  ┌─────────────────────────┐    │
+│  │ 📷 Bob       Matched 1d │    │
+│  │    "Hey! Love your..."   │    │
+│  └─────────────────────────┘    │
+└─────────────────────────────────┘
+```
+
+**Match → Chat flow:**
+- When two users mutually like each other, a match is created
+- Both receive a push notification: "You matched with @username!"
+- The match appears in MatchesScreen
+- Tapping a match opens a 1:1 DM (reuses existing chat infrastructure)
+
+### 8.16 Verify Email Screen
+
+**Purpose:** Shown after sign-up while waiting for .edu email confirmation.
+
+**Layout:**
+
+```
+┌─────────────────────────────────┐
+│                                 │
+│         📬                      │
+│                                 │
+│  Check your college email       │
+│                                 │
+│  We sent a verification link    │
+│  to alice@nyu.edu               │
+│                                 │
+│  [Resend Email]                 │
+│                                 │
+│  Already verified?              │
+│  [Continue to Login]            │
+│                                 │
+└─────────────────────────────────┘
+```
+
 ---
 
 ## 9. Navigation Structure
@@ -1030,15 +1274,21 @@ const fetchConversation = async (otherUserId: string) => {
 Root
 ├── AuthStack (unauthenticated)
 │   ├── LoginScreen
-│   └── SignUpScreen
+│   ├── SignUpScreen
+│   └── VerifyEmailScreen
 │
-└── MainTabs (authenticated)
+└── MainTabs (authenticated + verified)
     ├── Map Tab
     │   ├── MapScreen
     │   └── CreatePostScreen (modal)
     │
     ├── Feed Tab
     │   └── FeedScreen
+    │
+    ├── Dating Tab
+    │   ├── DatingFeedScreen
+    │   ├── DatingProfileSetup
+    │   └── MatchesScreen
     │
     ├── Communities Tab
     │   ├── CommunityListScreen
@@ -1059,10 +1309,13 @@ Root
 
 **Navigator types:**
 - `NavigationContainer` at root
-- Conditional render: `AuthStack` (Stack) if no session, `MainTabs` (BottomTab) if authenticated
+- Conditional render: `AuthStack` (Stack) if no session, `MainTabs` (BottomTab) if authenticated + email verified
 - Each tab contains a nested Stack navigator for drill-down screens
 - `AdminScreen` is only pushed onto the Profile stack if `user.role === 'admin'`
 - `GroupChatScreen` is shared between Communities and Chat tabs (defined once, navigable from both)
+- `DatingFeedScreen` checks for an active dating profile; if none, redirects to `DatingProfileSetup`
+
+**Tab bar:** 6 tabs — Map, Feed, Dating, Communities, Chat, Profile. On smaller screens the tab bar uses compact icons without labels.
 
 ---
 
