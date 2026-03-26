@@ -8,13 +8,12 @@ import { TabParamList } from '../types';
 
 const Tab = createBottomTabNavigator<TabParamList>();
 
-const TAB_ICONS: Record<
-  keyof TabParamList,
-  { active: keyof typeof Ionicons.glyphMap; inactive: keyof typeof Ionicons.glyphMap }
+const TAB_ICONS: Partial<
+  Record<keyof TabParamList, { active: keyof typeof Ionicons.glyphMap; inactive: keyof typeof Ionicons.glyphMap }>
 > = {
-  Feed: { active: 'newspaper', inactive: 'newspaper-outline' },
   Map: { active: 'map', inactive: 'map-outline' },
-  Messages: { active: 'chatbubbles', inactive: 'chatbubbles-outline' },
+  Feed: { active: 'newspaper', inactive: 'newspaper-outline' },
+  Chat: { active: 'chatbubbles', inactive: 'chatbubbles-outline' },
   Profile: { active: 'person', inactive: 'person-outline' },
 };
 
@@ -24,6 +23,7 @@ export default function TabNavigator() {
       screenOptions={({ route }) => ({
         tabBarIcon: ({ focused, color, size }) => {
           const icons = TAB_ICONS[route.name];
+          if (!icons) return null;
           return (
             <Ionicons
               name={focused ? icons.active : icons.inactive}
@@ -37,9 +37,9 @@ export default function TabNavigator() {
         headerTitleStyle: { fontWeight: '700' },
       })}
     >
-      <Tab.Screen name="Feed" component={FeedScreen} />
       <Tab.Screen name="Map" component={MapScreen} />
-      <Tab.Screen name="Messages" component={MessagesScreen} />
+      <Tab.Screen name="Feed" component={FeedScreen} />
+      <Tab.Screen name="Chat" component={MessagesScreen} />
       <Tab.Screen name="Profile" component={ProfileScreen} />
     </Tab.Navigator>
   );

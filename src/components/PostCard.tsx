@@ -24,19 +24,16 @@ export default function PostCard({ post }: Props) {
         <View style={styles.avatar}>
           <Ionicons name="person" size={16} color="#fff" />
         </View>
-        <Text style={styles.author}>Anonymous</Text>
+        <Text style={styles.author}>{post.is_anonymous ? 'Anonymous' : (post.username ?? 'User')}</Text>
         <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
       </View>
 
-      <Text style={styles.body}>{post.content}</Text>
+      <Text style={styles.body}>{post.text}</Text>
 
       <View style={styles.footer}>
-        <View style={styles.tag}>
-          <Text style={styles.tagText}>{post.school_id}</Text>
-        </View>
         <View style={styles.stat}>
           <Ionicons name="arrow-up-outline" size={18} color="#666" />
-          <Text style={styles.statText}>{post.upvote_count ?? 0}</Text>
+          <Text style={styles.statText}>{post.score ?? 0}</Text>
         </View>
       </View>
     </View>

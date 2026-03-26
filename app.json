@@ -8,13 +8,29 @@
     "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.ampd.app"
+      "bundleIdentifier": "com.ampd.app",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "Ampd uses your location to share your live position with friends you approve."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#ffffff"
       },
-      "package": "com.ampd.app"
-    }
+      "package": "com.ampd.app",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Ampd uses your location to share your live position with friends you approve."
+        }
+      ],
+      "expo-secure-store"
+    ]
   }
 }

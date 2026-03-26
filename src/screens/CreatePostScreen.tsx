@@ -10,12 +10,13 @@ import {
   Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { DEFAULT_SCHOOL_ID } from '../lib/campus';
+import { useAuth } from '../context/AuthContext';
 import { createPost } from '../services/posts';
 
 const MAX_LENGTH = 500;
 
 export default function CreatePostScreen() {
+  const { user } = useAuth();
   const [text, setText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const navigation = useNavigation();
@@ -26,7 +27,8 @@ export default function CreatePostScreen() {
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      await createPost(text.trim(), DEFAULT_SCHOOL_ID);
+      if (!user) return;
+      await createPost(text.trim(), user.id, { lat: 0, lng: 0 }, { isAnonymous: true });
       setText('');
       navigation.goBack();
     } catch (err) {
