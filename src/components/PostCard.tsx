@@ -1,6 +1,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Post } from '../types';
+import VoteButtons from './VoteButtons';
 
 function timeAgo(dateStr: string): string {
   const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
@@ -15,26 +16,39 @@ function timeAgo(dateStr: string): string {
 
 interface Props {
   post: Post;
+  userId?: string;
+  currentVote?: 1 | -1 | null;
 }
 
-export default function PostCard({ post }: Props) {
+export default function PostCard({ post, userId, currentVote = null }: Props) {
   return (
     <View style={styles.card}>
       <View style={styles.header}>
         <View style={styles.avatar}>
           <Ionicons name="person" size={16} color="#fff" />
         </View>
-        <Text style={styles.author}>{post.is_anonymous ? 'Anonymous' : (post.username ?? 'User')}</Text>
+        <Text style={styles.author}>
+          {post.is_anonymous ? 'Anonymous' : (post.username ?? 'User')}
+        </Text>
         <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
       </View>
 
       <Text style={styles.body}>{post.text}</Text>
 
       <View style={styles.footer}>
-        <View style={styles.stat}>
-          <Ionicons name="arrow-up-outline" size={18} color="#666" />
-          <Text style={styles.statText}>{post.score ?? 0}</Text>
-        </View>
+        {userId ? (
+          <VoteButtons
+            postId={post.id}
+            userId={userId}
+            score={post.score}
+            currentVote={currentVote}
+          />
+        ) : (
+          <View style={styles.scoreOnly}>
+            <Ionicons name="arrow-up-outline" size={18} color="#666" />
+            <Text style={styles.scoreText}>{post.score ?? 0}</Text>
+          </View>
+        )}
       </View>
     </View>
   );
@@ -85,28 +99,15 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
   },
-  tag: {
-    backgroundColor: '#F0EDFF',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 999,
-  },
-  tagText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6C5CE7',
-  },
-  stat: {
+  scoreOnly: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 4,
   },
-  statText: {
+  scoreText: {
     fontSize: 14,
     fontWeight: '600',
     color: '#666',
-    marginHorizontal: 4,
   },
 });

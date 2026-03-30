@@ -1,15 +1,70 @@
-import { View, FlatList, TouchableOpacity, Text, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
+import { useState, useEffect } from 'react';
+import {
+  View,
+  FlatList,
+  TouchableOpacity,
+  Text,
+  StyleSheet,
+  RefreshControl,
+  ActivityIndicator,
+} from 'react-native';
 import { useNavigation } from '@react-navigation/native';
-import { useEffect } from 'react';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import PostCard from '../components/PostCard';
 import { usePosts } from '../hooks/usePosts';
-import type { RootStackParamList } from '../types';
+import { useAuth } from '../context/AuthContext';
+import type { RootStackParamList, SortMode, MapBounds } from '../types';
+
+const FEED_RADIUS_MILES = 2;
+const milesToDegLat = (miles: number) => miles / 69.0;
+const milesToDegLng = (miles: number, lat: number) =>
+  miles / (69.0 * Math.cos(lat * (Math.PI / 180)));
+
+function boundsFromLocation(lat: number, lng: number, radiusMiles: number): MapBounds {
+  const dLat = milesToDegLat(radiusMiles);
+  const dLng = milesToDegLng(radiusMiles, lat);
+  return {
+    minLat: lat - dLat,
+    maxLat: lat + dLat,
+    minLng: lng - dLng,
+    maxLng: lng + dLng,
+  };
+}
 
 export default function FeedScreen() {
-  const { posts, loading, refreshing, error, refresh, reload } = usePosts();
+  const { user } = useAuth();
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const [sort, setSort] = useState<SortMode>('recent');
+  const [bounds, setBounds] = useState<MapBounds | undefined>(undefined);
+  const [locationError, setLocationError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationError('Location permission denied. Showing all posts.');
+        return;
+      }
+      try {
+        const pos = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+        setBounds(
+          boundsFromLocation(pos.coords.latitude, pos.coords.longitude, FEED_RADIUS_MILES),
+        );
+      } catch {
+        setLocationError('Could not get location. Showing all posts.');
+      }
+    })();
+  }, []);
+
+  const { posts, votes, loading, refreshing, error, refresh, reload } = usePosts({
+    userId: user?.id,
+    bounds,
+    sort,
+  });
 
   useEffect(() => {
     return navigation.addListener('focus', reload);
@@ -39,10 +94,40 @@ export default function FeedScreen() {
       <FlatList
         data={posts}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <PostCard post={item} />}
+        renderItem={({ item }) => (
+          <PostCard
+            post={item}
+            userId={user?.id}
+            currentVote={votes[item.id] ?? null}
+          />
+        )}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
-          error ? <Text style={styles.listErrorText}>{error}</Text> : null
+          <View>
+            {locationError && (
+              <Text style={styles.locationWarning}>{locationError}</Text>
+            )}
+            {error && <Text style={styles.listErrorText}>{error}</Text>}
+
+            <View style={styles.sortRow}>
+              <TouchableOpacity
+                style={[styles.sortButton, sort === 'recent' && styles.sortButtonActive]}
+                onPress={() => setSort('recent')}
+              >
+                <Text style={[styles.sortText, sort === 'recent' && styles.sortTextActive]}>
+                  Recent
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.sortButton, sort === 'top' && styles.sortButtonActive]}
+                onPress={() => setSort('top')}
+              >
+                <Text style={[styles.sortText, sort === 'top' && styles.sortTextActive]}>
+                  Top
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         }
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor="#6C5CE7" />
@@ -50,7 +135,7 @@ export default function FeedScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="newspaper-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyText}>No posts yet. Be the first!</Text>
+            <Text style={styles.emptyText}>No posts nearby. Be the first!</Text>
           </View>
         }
       />
@@ -81,6 +166,37 @@ const styles = StyleSheet.create({
     color: '#C0392B',
     fontSize: 13,
     marginBottom: 10,
+  },
+  locationWarning: {
+    backgroundColor: '#FFF8E1',
+    color: '#F57F17',
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 12,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  sortRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  sortButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#E8E8E8',
+  },
+  sortButtonActive: {
+    backgroundColor: '#6C5CE7',
+  },
+  sortText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#666',
+  },
+  sortTextActive: {
+    color: '#fff',
   },
   retryButton: {
     backgroundColor: '#6C5CE7',
