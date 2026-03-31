@@ -9,6 +9,9 @@ import {
 } from 'react-native';
 import MapView, { Marker, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { CAMPUS_DEFAULT_REGION } from '../lib/campus';
 import { isLocationFresh } from '../lib/geo';
 import { useAuth } from '../context/AuthContext';
@@ -18,15 +21,33 @@ import {
   subscribeToFriendLocations,
   updateMyLocation,
 } from '../services/liveLocations';
-import type { UserLocation } from '../types';
+import { fetchPostsInBounds } from '../services/posts';
+import PostMarker from '../components/PostMarker';
+import type { UserLocation, Post, MapBounds, RootStackParamList } from '../types';
+
+const DEBOUNCE_MS = 500;
+
+function getBoundsFromRegion(region: Region): MapBounds {
+  return {
+    minLat: region.latitude - region.latitudeDelta / 2,
+    maxLat: region.latitude + region.latitudeDelta / 2,
+    minLng: region.longitude - region.longitudeDelta / 2,
+    maxLng: region.longitude + region.longitudeDelta / 2,
+  };
+}
 
 export default function MapScreen() {
   const { user } = useAuth();
   const currentUserId = user?.id ?? null;
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const mapRef = useRef<MapView | null>(null);
   const regionRef = useRef<Region>(CAMPUS_DEFAULT_REGION);
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const [friendLocations, setFriendLocations] = useState<UserLocation[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [showFriends, setShowFriends] = useState(true);
+  const [showPosts, setShowPosts] = useState(true);
   const [sharingEnabled, setSharingEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -34,11 +55,19 @@ export default function MapScreen() {
 
   const staleFriendCount = useMemo(
     () =>
-      friendLocations.filter(
-        (location) => !isLocationFresh(location.updated_at),
-      ).length,
+      friendLocations.filter((loc) => !isLocationFresh(loc.updated_at)).length,
     [friendLocations],
   );
+
+  const loadPosts = useCallback(async (region?: Region) => {
+    try {
+      const bounds = getBoundsFromRegion(region ?? regionRef.current);
+      const data = await fetchPostsInBounds(bounds);
+      setPosts(data);
+    } catch (err) {
+      console.error('Failed to load map posts:', err);
+    }
+  }, []);
 
   const loadMapData = useCallback(
     async (options: { asRefresh?: boolean } = {}) => {
@@ -52,40 +81,33 @@ export default function MapScreen() {
       setError(null);
 
       try {
-        const locations = await getVisibleFriendLocations(currentUserId);
+        const [locations] = await Promise.all([
+          getVisibleFriendLocations(currentUserId),
+          loadPosts(),
+        ]);
         setFriendLocations(locations);
       } catch (err) {
         console.error('Map data load failed:', err);
-        setError('Could not load map data. Pull to refresh and try again.');
+        setError('Could not load map data.');
       } finally {
         setLoading(false);
         setRefreshing(false);
       }
     },
-    [currentUserId],
+    [currentUserId, loadPosts],
   );
 
   const publishCurrentLocation = useCallback(async () => {
-    if (!currentUserId) {
-      throw new Error('Missing current user.');
-    }
-
-    const currentPosition = await Location.getCurrentPositionAsync({
+    if (!currentUserId) throw new Error('Missing current user.');
+    const pos = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     });
-
-    await updateMyLocation(
-      currentUserId,
-      currentPosition.coords.latitude,
-      currentPosition.coords.longitude,
-    );
+    await updateMyLocation(currentUserId, pos.coords.latitude, pos.coords.longitude);
   }, [currentUserId]);
 
   const refresh = useCallback(async () => {
     try {
-      if (sharingEnabled) {
-        await publishCurrentLocation();
-      }
+      if (sharingEnabled) await publishCurrentLocation();
       await loadMapData({ asRefresh: true });
     } catch (err) {
       console.error('Map refresh failed:', err);
@@ -97,7 +119,6 @@ export default function MapScreen() {
   const handleToggleSharing = useCallback(
     async (nextValue: boolean) => {
       if (!currentUserId) return;
-
       if (!nextValue) {
         try {
           await setMyLocationSharingEnabled(currentUserId, false);
@@ -108,14 +129,12 @@ export default function MapScreen() {
         }
         return;
       }
-
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== 'granted') {
-        setError('Location permission denied. Enable permission to share location.');
+        setError('Location permission denied.');
         setSharingEnabled(false);
         return;
       }
-
       try {
         setSharingEnabled(true);
         await publishCurrentLocation();
@@ -129,6 +148,17 @@ export default function MapScreen() {
     [currentUserId, loadMapData, publishCurrentLocation],
   );
 
+  const handleRegionChange = useCallback(
+    (region: Region) => {
+      regionRef.current = region;
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+      debounceTimer.current = setTimeout(() => {
+        loadPosts(region);
+      }, DEBOUNCE_MS);
+    },
+    [loadPosts],
+  );
+
   useEffect(() => {
     if (!currentUserId) return;
     void loadMapData();
@@ -140,28 +170,32 @@ export default function MapScreen() {
     return unsubscribe;
   }, [currentUserId]);
 
+  useEffect(() => {
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    };
+  }, []);
+
   return (
     <View style={styles.container}>
       <MapView
         ref={mapRef}
         style={styles.map}
         initialRegion={CAMPUS_DEFAULT_REGION}
-        onRegionChangeComplete={(nextRegion) => {
-          regionRef.current = nextRegion;
-        }}
+        onRegionChangeComplete={handleRegionChange}
       >
+        {showPosts &&
+          posts.map((post) => <PostMarker key={post.id} post={post} />)}
+
         {showFriends &&
-          friendLocations.map((location) => {
-            const fresh = isLocationFresh(location.updated_at);
+          friendLocations.map((loc) => {
+            const fresh = isLocationFresh(loc.updated_at);
             return (
               <Marker
-                key={location.user_id}
-                coordinate={{
-                  latitude: location.lat,
-                  longitude: location.lng,
-                }}
-                title={location.username ?? (fresh ? 'Friend' : 'Friend (stale)')}
-                description={new Date(location.updated_at).toLocaleTimeString()}
+                key={loc.user_id}
+                coordinate={{ latitude: loc.lat, longitude: loc.lng }}
+                title={loc.username ?? (fresh ? 'Friend' : 'Friend (stale)')}
+                description={new Date(loc.updated_at).toLocaleTimeString()}
                 pinColor={fresh ? '#1D9BF0' : '#9AA0A6'}
                 opacity={fresh ? 1 : 0.55}
               />
@@ -171,11 +205,15 @@ export default function MapScreen() {
 
       <View style={styles.controlsCard}>
         <View style={styles.row}>
+          <Text style={styles.label}>Posts</Text>
+          <Switch value={showPosts} onValueChange={setShowPosts} />
+        </View>
+        <View style={styles.row}>
           <Text style={styles.label}>Friends</Text>
           <Switch value={showFriends} onValueChange={setShowFriends} />
         </View>
         <View style={styles.row}>
-          <Text style={styles.label}>Share My Location</Text>
+          <Text style={styles.label}>Share Location</Text>
           <Switch value={sharingEnabled} onValueChange={handleToggleSharing} />
         </View>
 
@@ -189,22 +227,31 @@ export default function MapScreen() {
             style={styles.actionButton}
             onPress={() => mapRef.current?.animateToRegion(CAMPUS_DEFAULT_REGION, 500)}
           >
-            <Text style={styles.actionButtonText}>Center Campus</Text>
+            <Text style={styles.actionButtonText}>Center</Text>
           </TouchableOpacity>
         </View>
 
         <Text style={styles.legend}>
-          Blue pins = live friends. Gray pins = stale ({staleFriendCount}).
+          Purple = posts. Blue = friends. Gray = stale ({staleFriendCount}).
         </Text>
       </View>
 
-      {loading ? (
+      {loading && (
         <View style={styles.loadingOverlay}>
           <ActivityIndicator size="large" color="#6C5CE7" />
         </View>
-      ) : null}
+      )}
 
-      {error ? <Text style={styles.errorBanner}>{error}</Text> : null}
+      {error && <Text style={styles.errorBanner}>{error}</Text>}
+
+      {/* FAB - Create Post */}
+      <TouchableOpacity
+        style={styles.fab}
+        activeOpacity={0.8}
+        onPress={() => navigation.navigate('CreatePost')}
+      >
+        <Ionicons name="add" size={28} color="#fff" />
+      </TouchableOpacity>
     </View>
   );
 }
@@ -230,14 +277,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: 8,
+    marginBottom: 6,
   },
   label: { fontSize: 14, color: '#222', fontWeight: '600' },
   buttonRow: {
     flexDirection: 'row',
     gap: 8,
     marginTop: 4,
-    marginBottom: 8,
+    marginBottom: 6,
   },
   actionButton: {
     backgroundColor: '#6C5CE7',
@@ -246,7 +293,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
   },
   actionButtonText: { color: '#fff', fontWeight: '600', fontSize: 13 },
-  legend: { fontSize: 12, color: '#555' },
+  legend: { fontSize: 11, color: '#555' },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
@@ -257,7 +304,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 12,
     right: 12,
-    bottom: 12,
+    bottom: 80,
     backgroundColor: '#FDECEC',
     color: '#A61B1B',
     borderRadius: 10,
@@ -265,5 +312,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     fontSize: 13,
     textAlign: 'center',
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#6C5CE7',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
 });
