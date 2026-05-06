@@ -12,6 +12,7 @@ import CreateCommunityScreen from '../screens/CreateCommunityScreen';
 import GroupChatScreen from '../screens/GroupChatScreen';
 import DatingFeedScreen from '../screens/DatingFeedScreen';
 import DatingProfileSetup from '../screens/DatingProfileSetup';
+import MatchesScreen from '../screens/MatchesScreen';
 import {
   TabParamList,
   ChatStackParamList,
@@ -72,6 +73,7 @@ function DatingStackNavigator() {
         component={DatingProfileSetup}
         options={{ title: 'Profile Setup' }}
       />
+      <DatingStack.Screen name="Matches" component={MatchesScreen} options={{ title: 'Matches' }} />
     </DatingStack.Navigator>
   );
 }

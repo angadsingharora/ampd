@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, FlatList, TouchableOpacity, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
@@ -38,6 +39,16 @@ export default function DatingFeedScreen({ navigation }: Props) {
   useEffect(() => {
     load().catch((err) => console.error('Failed to load dating feed:', err));
   }, [load]);
+
+  useEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity onPress={() => navigation.navigate('Matches')} style={{ marginRight: 8 }}>
+          <Ionicons name="heart" size={24} color="#6C5CE7" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
 
   const current = useMemo(() => feed[0], [feed]);
 
@@ -103,11 +114,20 @@ export default function DatingFeedScreen({ navigation }: Props) {
         contentContainerStyle={styles.content}
       />
       <View style={styles.actions}>
+        <Text style={styles.hintText}>Tap the heart on a photo or prompt to like that specific section.</Text>
         <TouchableOpacity style={styles.skipBtn} onPress={handleSkip}>
           <Text style={styles.skipText}>Skip</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.likeBtn} onPress={() => handleLike('prompt', 0).catch(console.error)}>
-          <Text style={styles.likeText}>Like</Text>
+        <TouchableOpacity
+          style={styles.likeBtn}
+          onPress={() =>
+            handleLike(
+              current.photos.length > 0 ? 'photo' : 'prompt',
+              0,
+            ).catch(console.error)
+          }
+        >
+          <Text style={styles.likeText}>Quick Like</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -128,8 +148,10 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 10,
   },
+  hintText: { width: '100%', color: '#666', fontSize: 12, marginBottom: 2 },
   skipBtn: {
     flex: 1,
     backgroundColor: '#fff',
@@ -149,4 +171,3 @@ const styles = StyleSheet.create({
   },
   likeText: { color: '#fff', fontWeight: '700' },
 });
-
