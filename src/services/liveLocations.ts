@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import { getAcceptedFriendIds } from './friends';
 import type { UserLocation } from '../types';
 
 export async function updateMyLocation(
@@ -34,15 +35,46 @@ export async function setMyLocationSharingEnabled(
 }
 
 export async function getVisibleFriendLocations(
-  _currentUserId: string,
+  currentUserId: string,
 ): Promise<UserLocation[]> {
+  const friendIds = await getAcceptedFriendIds(currentUserId);
+  if (friendIds.length === 0) return [];
+
   const { data, error } = await supabase
     .from('locations')
     .select('*')
-    .eq('sharing', true);
+    .eq('sharing', true)
+    .in('user_id', friendIds);
 
   if (error) throw error;
-  return (data as UserLocation[]) ?? [];
+
+  const { data: users, error: usersError } = await supabase
+    .from('users')
+    .select('id, username')
+    .in('id', friendIds);
+
+  if (usersError) throw usersError;
+
+  const usernameMap: Record<string, string> = {};
+  for (const user of users ?? []) {
+    usernameMap[user.id] = user.username;
+  }
+
+  return ((data as UserLocation[]) ?? []).map((row) => ({
+    ...row,
+    username: usernameMap[row.user_id] ?? row.username,
+  }));
+}
+
+export async function getMyLocationSharingEnabled(userId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('locations')
+    .select('sharing')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return Boolean(data?.sharing);
 }
 
 export function subscribeToFriendLocations(

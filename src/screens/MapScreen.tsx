@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  FlatList,
   StyleSheet,
   Switch,
   Text,
@@ -16,6 +17,7 @@ import { CAMPUS_DEFAULT_REGION } from '../lib/campus';
 import { isLocationFresh } from '../lib/geo';
 import { useAuth } from '../context/AuthContext';
 import {
+  getMyLocationSharingEnabled,
   getVisibleFriendLocations,
   setMyLocationSharingEnabled,
   subscribeToFriendLocations,
@@ -49,6 +51,7 @@ export default function MapScreen() {
   const [showFriends, setShowFriends] = useState(true);
   const [showPosts, setShowPosts] = useState(true);
   const [sharingEnabled, setSharingEnabled] = useState(false);
+  const [showFindFriends, setShowFindFriends] = useState(false);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,11 +84,13 @@ export default function MapScreen() {
       setError(null);
 
       try {
-        const [locations] = await Promise.all([
+        const [locations, isSharing] = await Promise.all([
           getVisibleFriendLocations(currentUserId),
+          getMyLocationSharingEnabled(currentUserId),
           loadPosts(),
         ]);
         setFriendLocations(locations);
+        setSharingEnabled(isSharing);
       } catch (err) {
         console.error('Map data load failed:', err);
         setError('Could not load map data.');
@@ -159,6 +164,19 @@ export default function MapScreen() {
     [loadPosts],
   );
 
+  const focusFriend = useCallback((friend: UserLocation) => {
+    mapRef.current?.animateToRegion(
+      {
+        latitude: friend.lat,
+        longitude: friend.lng,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      },
+      600,
+    );
+    setShowFindFriends(false);
+  }, []);
+
   useEffect(() => {
     if (!currentUserId) return;
     void loadMapData();
@@ -229,12 +247,58 @@ export default function MapScreen() {
           >
             <Text style={styles.actionButtonText}>Center</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => setShowFindFriends((prev) => !prev)}
+          >
+            <Text style={styles.actionButtonText}>
+              {showFindFriends ? 'Hide Friends' : 'Find Friends'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.legend}>
           Purple = posts. Blue = friends. Gray = stale ({staleFriendCount}).
         </Text>
       </View>
+
+      {showFindFriends && (
+        <View style={styles.findFriendsCard}>
+          <Text style={styles.findFriendsTitle}>Find My Friends</Text>
+          {friendLocations.length === 0 ? (
+            <Text style={styles.emptyFriendsText}>
+              No friend locations yet. Friends must be accepted and sharing location.
+            </Text>
+          ) : (
+            <FlatList
+              data={friendLocations}
+              keyExtractor={(item) => item.user_id}
+              style={styles.friendList}
+              renderItem={({ item }) => {
+                const fresh = isLocationFresh(item.updated_at);
+                return (
+                  <TouchableOpacity
+                    style={styles.friendRow}
+                    onPress={() => focusFriend(item)}
+                  >
+                    <View style={[styles.friendDot, !fresh && styles.friendDotStale]} />
+                    <View style={styles.friendMeta}>
+                      <Text style={styles.friendName}>
+                        @{item.username ?? 'friend'}
+                      </Text>
+                      <Text style={styles.friendTimestamp}>
+                        {fresh ? 'Live now' : 'Stale'} -{' '}
+                        {new Date(item.updated_at).toLocaleTimeString()}
+                      </Text>
+                    </View>
+                    <Ionicons name="locate" size={18} color="#6C5CE7" />
+                  </TouchableOpacity>
+                );
+              }}
+            />
+          )}
+        </View>
+      )}
 
       {loading && (
         <View style={styles.loadingOverlay}>
@@ -282,6 +346,7 @@ const styles = StyleSheet.create({
   label: { fontSize: 14, color: '#222', fontWeight: '600' },
   buttonRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     marginTop: 4,
     marginBottom: 6,
@@ -294,6 +359,63 @@ const styles = StyleSheet.create({
   },
   actionButtonText: { color: '#fff', fontWeight: '600', fontSize: 13 },
   legend: { fontSize: 11, color: '#555' },
+  findFriendsCard: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    bottom: 90,
+    maxHeight: 250,
+    backgroundColor: 'rgba(255,255,255,0.96)',
+    borderRadius: 12,
+    padding: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  findFriendsTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 8,
+  },
+  emptyFriendsText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  friendList: {
+    maxHeight: 200,
+  },
+  friendRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+    borderBottomColor: '#EBEEF3',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+  },
+  friendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#1D9BF0',
+    marginRight: 10,
+  },
+  friendDotStale: {
+    backgroundColor: '#9AA0A6',
+  },
+  friendMeta: {
+    flex: 1,
+  },
+  friendName: {
+    fontSize: 13,
+    color: '#111827',
+    fontWeight: '600',
+  },
+  friendTimestamp: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
   loadingOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
