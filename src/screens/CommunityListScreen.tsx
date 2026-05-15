@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -15,6 +15,11 @@ import { useAuth } from '../context/AuthContext';
 import CommunityCard from '../components/CommunityCard';
 import { fetchCommunities, joinCommunity } from '../services/communities';
 import { fetchGroupConversationList } from '../services/groupMessages';
+import {
+  clearCommunitySearchDraft,
+  getCommunitySearchDraft,
+  saveCommunitySearchDraft,
+} from '../services/postDrafts';
 import type { CommunitiesStackParamList, Community } from '../types';
 
 type Nav = NativeStackNavigationProp<CommunitiesStackParamList, 'CommunityList'>;
@@ -26,6 +31,8 @@ export default function CommunityListScreen() {
   const [myCommunities, setMyCommunities] = useState<Community[]>([]);
   const [discover, setDiscover] = useState<Community[]>([]);
   const [loading, setLoading] = useState(true);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -55,6 +62,32 @@ export default function CommunityListScreen() {
     load().catch((err) => console.error('Failed to load communities:', err));
   }, [load]);
 
+  useEffect(() => {
+    let mounted = true;
+    async function loadDraft() {
+      const draft = await getCommunitySearchDraft();
+      if (!mounted || !draft.trim()) return;
+      setQuery(draft);
+      setDraftRestored(true);
+    }
+    loadDraft().catch((err) => console.error('Failed to restore search draft:', err));
+    return () => {
+      mounted = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveCommunitySearchDraft(query).catch((err) => console.error('Failed to save search draft:', err));
+    }, 250);
+
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [query]);
+
   const filteredMy = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return myCommunities;
@@ -73,6 +106,12 @@ export default function CommunityListScreen() {
     await load();
   }
 
+  async function handleDiscardDraft() {
+    await clearCommunitySearchDraft();
+    setQuery('');
+    setDraftRestored(false);
+  }
+
   return (
     <View style={styles.container}>
       <TextInput
@@ -82,6 +121,11 @@ export default function CommunityListScreen() {
         placeholder="Search communities..."
         placeholderTextColor="#999"
       />
+      {draftRestored ? (
+        <TouchableOpacity style={styles.discardRow} onPress={() => handleDiscardDraft().catch(console.error)}>
+          <Text style={styles.discardText}>Discard restored search</Text>
+        </TouchableOpacity>
+      ) : null}
 
       {loading ? (
         <ActivityIndicator style={{ marginTop: 24 }} color="#6C5CE7" />
@@ -141,6 +185,12 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     color: '#222',
   },
+  discardRow: {
+    marginHorizontal: 12,
+    marginTop: -6,
+    marginBottom: 8,
+  },
+  discardText: { fontSize: 12, fontWeight: '700', color: '#C0392B' },
   listContent: { paddingHorizontal: 12, paddingBottom: 96 },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#222', marginVertical: 10 },
   emptyText: { color: '#888', marginBottom: 10 },
@@ -156,4 +206,3 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 });
-

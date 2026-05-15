@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   FlatList,
@@ -14,6 +14,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 import { fetchGroupMessages, sendGroupMessage } from '../services/groupMessages';
+import { clearGroupChatDraft, getGroupChatDraft, saveGroupChatDraft } from '../services/postDrafts';
 import type { CommunitiesStackParamList, GroupMessage } from '../types';
 import ChatBubble from '../components/ChatBubble';
 
@@ -24,6 +25,9 @@ export default function GroupChatScreen({ route, navigation }: Props) {
   const { communityId, communityName } = route.params;
   const [messages, setMessages] = useState<GroupMessage[]>([]);
   const [text, setText] = useState('');
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [loadingDraft, setLoadingDraft] = useState(true);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     navigation.setOptions({ title: communityName });
@@ -37,6 +41,43 @@ export default function GroupChatScreen({ route, navigation }: Props) {
   useEffect(() => {
     load().catch((err) => console.error('Failed to load group messages:', err));
   }, [load]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadDraft() {
+      try {
+        const draft = await getGroupChatDraft(communityId);
+        if (!mounted) return;
+        if (draft.trim()) {
+          setText(draft);
+          setDraftRestored(true);
+        }
+      } catch (err) {
+        console.error('Failed to load group draft:', err);
+      } finally {
+        if (mounted) setLoadingDraft(false);
+      }
+    }
+
+    loadDraft().catch(console.error);
+    return () => {
+      mounted = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [communityId]);
+
+  useEffect(() => {
+    if (loadingDraft) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveGroupChatDraft(communityId, text).catch((err) =>
+        console.error('Failed to save group draft:', err),
+      );
+    }, 350);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [communityId, loadingDraft, text]);
 
   useEffect(() => {
     const channel = supabase
@@ -95,14 +136,22 @@ export default function GroupChatScreen({ route, navigation }: Props) {
 
     setMessages((prev) => [...prev, optimistic]);
     setText('');
+    setDraftRestored(false);
 
     try {
       const inserted = await sendGroupMessage(communityId, user.id, trimmed);
+      await clearGroupChatDraft(communityId);
       setMessages((prev) => prev.map((message) => (message.id === tempId ? { ...inserted, sender_username: user.username } : message)));
     } catch (err) {
       setMessages((prev) => prev.filter((message) => message.id !== tempId));
       console.error('Failed to send group message:', err);
     }
+  }
+
+  async function handleDiscardDraft() {
+    await clearGroupChatDraft(communityId);
+    setText('');
+    setDraftRestored(false);
   }
 
   return (
@@ -125,6 +174,11 @@ export default function GroupChatScreen({ route, navigation }: Props) {
         )}
       />
       <View style={styles.inputRow}>
+        {draftRestored ? (
+          <TouchableOpacity style={styles.discardDraftBtn} onPress={() => handleDiscardDraft().catch(console.error)}>
+            <Text style={styles.discardDraftText}>Discard</Text>
+          </TouchableOpacity>
+        ) : null}
         <TextInput
           style={styles.input}
           placeholder="Message community..."
@@ -169,5 +223,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  discardDraftBtn: {
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+  },
+  discardDraftText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#C0392B',
+  },
 });
-

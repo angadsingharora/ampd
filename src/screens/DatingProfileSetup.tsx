@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,11 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { createProfile, updateProfile } from '../services/dating';
+import {
+  clearDatingProfileDraft,
+  getDatingProfileDraft,
+  saveDatingProfileDraft,
+} from '../services/postDrafts';
 import { supabase } from '../lib/supabase';
 import type { DatingStackParamList, PromptAnswer } from '../types';
 
@@ -32,11 +37,65 @@ export default function DatingProfileSetup({ navigation }: Props) {
   const [age, setAge] = useState('');
   const [bio, setBio] = useState('');
   const [active, setActive] = useState(true);
+  const [loadingDraft, setLoadingDraft] = useState(true);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [prompts, setPrompts] = useState<PromptAnswer[]>([
     { prompt: PRESET_PROMPTS[0], answer: '' },
     { prompt: PRESET_PROMPTS[1], answer: '' },
     { prompt: PRESET_PROMPTS[2], answer: '' },
   ]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadDraft() {
+      try {
+        const draft = await getDatingProfileDraft();
+        if (!mounted || !draft) return;
+
+        setPhotos(draft.photos.length ? draft.photos : ['', '']);
+        setAge(draft.age);
+        setBio(draft.bio);
+        setActive(draft.active);
+        if (draft.prompts.length === 3) {
+          setPrompts(draft.prompts);
+        }
+
+        const hasContent =
+          draft.photos.some((p) => p.trim()) ||
+          draft.prompts.some((p) => p.prompt.trim() || p.answer.trim()) ||
+          draft.age.trim() ||
+          draft.bio.trim() ||
+          !draft.active;
+        if (hasContent) setDraftRestored(true);
+      } catch (err) {
+        console.error('Failed to load dating profile draft:', err);
+      } finally {
+        if (mounted) setLoadingDraft(false);
+      }
+    }
+
+    loadDraft().catch(console.error);
+    return () => {
+      mounted = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadingDraft) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveDatingProfileDraft({ photos, age, bio, active, prompts }).catch((err) =>
+        console.error('Failed to save dating profile draft:', err),
+      );
+    }, 350);
+
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [active, age, bio, loadingDraft, photos, prompts]);
 
   const isValid = useMemo(() => {
     const validPhotos = photos.map((p) => p.trim()).filter(Boolean);
@@ -76,14 +135,37 @@ export default function DatingProfileSetup({ navigation }: Props) {
       } else {
         await createProfile(user.id, payload);
       }
+      await clearDatingProfileDraft();
       navigation.goBack();
     } catch (err: any) {
       Alert.alert('Error', err?.message ?? 'Could not save dating profile.');
     }
   }
 
+  async function handleDiscardDraft() {
+    await clearDatingProfileDraft();
+    setPhotos(['', '']);
+    setAge('');
+    setBio('');
+    setActive(true);
+    setPrompts([
+      { prompt: PRESET_PROMPTS[0], answer: '' },
+      { prompt: PRESET_PROMPTS[1], answer: '' },
+      { prompt: PRESET_PROMPTS[2], answer: '' },
+    ]);
+    setDraftRestored(false);
+  }
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {draftRestored ? (
+        <View style={styles.draftRow}>
+          <Text style={styles.draftInfo}>Draft restored</Text>
+          <TouchableOpacity onPress={() => handleDiscardDraft().catch(console.error)}>
+            <Text style={styles.discardText}>Discard</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
       <Text style={styles.sectionTitle}>Photos (2-6)</Text>
       {photos.map((photo, index) => (
         <TextInput
@@ -158,7 +240,11 @@ export default function DatingProfileSetup({ navigation }: Props) {
         <Switch value={active} onValueChange={setActive} />
       </View>
 
-      <TouchableOpacity style={[styles.saveBtn, !isValid && styles.saveBtnDisabled]} onPress={() => handleSave().catch(console.error)}>
+      <TouchableOpacity
+        style={[styles.saveBtn, (!isValid || loadingDraft) && styles.saveBtnDisabled]}
+        disabled={!isValid || loadingDraft}
+        onPress={() => handleSave().catch(console.error)}
+      >
         <Text style={styles.saveText}>Save Profile</Text>
       </TouchableOpacity>
     </ScrollView>
@@ -168,6 +254,14 @@ export default function DatingProfileSetup({ navigation }: Props) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
   content: { padding: 14, paddingBottom: 28 },
+  draftRow: {
+    marginBottom: 2,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  draftInfo: { color: '#6C5CE7', fontSize: 12, fontWeight: '600' },
+  discardText: { color: '#C0392B', fontSize: 12, fontWeight: '700' },
   sectionTitle: { marginTop: 12, marginBottom: 8, fontSize: 16, fontWeight: '700', color: '#222' },
   input: {
     backgroundColor: '#fff',
@@ -232,4 +326,3 @@ const styles = StyleSheet.create({
   saveBtnDisabled: { opacity: 0.6 },
   saveText: { color: '#fff', fontWeight: '700' },
 });
-

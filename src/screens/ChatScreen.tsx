@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   FlatList,
@@ -13,6 +13,7 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { fetchConversation, sendMessage } from '../services/messages';
+import { clearChatDraft, getChatDraft, saveChatDraft } from '../services/postDrafts';
 import { supabase } from '../lib/supabase';
 import ChatBubble from '../components/ChatBubble';
 import type { ChatStackParamList, Message } from '../types';
@@ -24,6 +25,9 @@ export default function ChatScreen({ route, navigation }: Props) {
   const { userId: otherUserId, username } = route.params;
   const [messages, setMessages] = useState<Message[]>([]);
   const [text, setText] = useState('');
+  const [draftRestored, setDraftRestored] = useState(false);
+  const [loadingDraft, setLoadingDraft] = useState(true);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     navigation.setOptions({ title: `@${username}` });
@@ -38,6 +42,40 @@ export default function ChatScreen({ route, navigation }: Props) {
   useEffect(() => {
     loadConversation().catch((err) => console.error('Failed to fetch conversation:', err));
   }, [loadConversation]);
+
+  useEffect(() => {
+    let mounted = true;
+    async function loadDraft() {
+      try {
+        const draft = await getChatDraft(otherUserId);
+        if (!mounted) return;
+        if (draft.trim()) {
+          setText(draft);
+          setDraftRestored(true);
+        }
+      } catch (err) {
+        console.error('Failed to load chat draft:', err);
+      } finally {
+        if (mounted) setLoadingDraft(false);
+      }
+    }
+    loadDraft().catch(console.error);
+    return () => {
+      mounted = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [otherUserId]);
+
+  useEffect(() => {
+    if (loadingDraft) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveChatDraft(otherUserId, text).catch((err) => console.error('Failed to save chat draft:', err));
+    }, 350);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [loadingDraft, otherUserId, text]);
 
   useEffect(() => {
     if (!user) return;
@@ -91,9 +129,11 @@ export default function ChatScreen({ route, navigation }: Props) {
 
     setMessages((prev) => [...prev, optimistic]);
     setText('');
+    setDraftRestored(false);
 
     try {
       const inserted = await sendMessage(user.id, otherUserId, trimmed);
+      await clearChatDraft(otherUserId);
       setMessages((prev) =>
         prev.map((message) => (message.id === tempId ? inserted : message)),
       );
@@ -101,6 +141,12 @@ export default function ChatScreen({ route, navigation }: Props) {
       setMessages((prev) => prev.filter((message) => message.id !== tempId));
       console.error('Failed to send message:', err);
     }
+  }
+
+  async function handleDiscardDraft() {
+    await clearChatDraft(otherUserId);
+    setText('');
+    setDraftRestored(false);
   }
 
   return (
@@ -119,6 +165,11 @@ export default function ChatScreen({ route, navigation }: Props) {
         contentContainerStyle={styles.listContent}
       />
       <View style={styles.inputRow}>
+        {draftRestored ? (
+          <TouchableOpacity style={styles.discardDraftBtn} onPress={() => handleDiscardDraft().catch(console.error)}>
+            <Text style={styles.discardDraftText}>Discard</Text>
+          </TouchableOpacity>
+        ) : null}
         <TextInput
           style={styles.input}
           placeholder="Type a message..."
@@ -165,6 +216,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  discardDraftBtn: {
+    paddingHorizontal: 8,
+    justifyContent: 'center',
+  },
+  discardDraftText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#C0392B',
+  },
   warning: {
     textAlign: 'center',
     fontSize: 12,
@@ -173,4 +233,3 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
   },
 });
-

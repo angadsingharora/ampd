@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -22,6 +22,12 @@ import {
 } from '../services/friends';
 import { setMyLocationSharingEnabled } from '../services/liveLocations';
 import FriendListItem from '../components/FriendListItem';
+import {
+  clearAllDrafts,
+  clearFriendSearchDraft,
+  getFriendSearchDraft,
+  saveFriendSearchDraft,
+} from '../services/postDrafts';
 import type { User } from '../types';
 
 export default function ProfileScreen() {
@@ -33,6 +39,9 @@ export default function ProfileScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
+  const [clearingDrafts, setClearingDrafts] = useState(false);
+  const [draftRestored, setDraftRestored] = useState(false);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadFriends = useCallback(async () => {
     if (!user) return;
@@ -51,6 +60,32 @@ export default function ProfileScreen() {
     loadFriends();
   }, [loadFriends]);
 
+  useEffect(() => {
+    let mounted = true;
+    async function loadSearchDraft() {
+      const draft = await getFriendSearchDraft();
+      if (!mounted || !draft.trim()) return;
+      setSearchQuery(draft);
+      setDraftRestored(true);
+    }
+    loadSearchDraft().catch((err) => console.error('Failed to load friend search draft:', err));
+    return () => {
+      mounted = false;
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      saveFriendSearchDraft(searchQuery).catch((err) => console.error('Failed to save friend search draft:', err));
+    }, 250);
+
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [searchQuery]);
+
   async function handleSearch() {
     if (!user || searchQuery.trim().length < 2) return;
     setSearching(true);
@@ -62,6 +97,13 @@ export default function ProfileScreen() {
     } finally {
       setSearching(false);
     }
+  }
+
+  async function handleDiscardSearchDraft() {
+    await clearFriendSearchDraft();
+    setSearchQuery('');
+    setSearchResults([]);
+    setDraftRestored(false);
   }
 
   async function handleAddFriend(friendId: string) {
@@ -122,6 +164,22 @@ export default function ProfileScreen() {
     ]);
   }
 
+  async function handleClearAllDrafts() {
+    setClearingDrafts(true);
+    try {
+      await clearAllDrafts();
+      setSearchQuery('');
+      setSearchResults([]);
+      setDraftRestored(false);
+      Alert.alert('Done', 'All saved drafts were cleared.');
+    } catch (err) {
+      console.error('Failed to clear drafts:', err);
+      Alert.alert('Error', 'Could not clear drafts.');
+    } finally {
+      setClearingDrafts(false);
+    }
+  }
+
   if (!user) return null;
 
   const incomingRequests = friends.filter((f) => f.direction === 'incoming');
@@ -143,6 +201,28 @@ export default function ProfileScreen() {
             </View>
           </View>
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Drafts</Text>
+        <TouchableOpacity
+          style={[styles.clearDraftsBtn, clearingDrafts && styles.clearDraftsBtnDisabled]}
+          disabled={clearingDrafts}
+          onPress={() =>
+            Alert.alert('Clear saved drafts?', 'This will remove all locally saved drafts.', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: clearingDrafts ? 'Clearing...' : 'Clear',
+                style: 'destructive',
+                onPress: () => handleClearAllDrafts().catch(console.error),
+              },
+            ])
+          }
+        >
+          <Text style={styles.clearDraftsText}>
+            {clearingDrafts ? 'Clearing...' : 'Clear All Saved Drafts'}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Location Sharing */}
@@ -176,6 +256,11 @@ export default function ProfileScreen() {
             )}
           </TouchableOpacity>
         </View>
+        {draftRestored ? (
+          <TouchableOpacity style={styles.discardDraftBtn} onPress={() => handleDiscardSearchDraft().catch(console.error)}>
+            <Text style={styles.discardDraftText}>Discard restored search</Text>
+          </TouchableOpacity>
+        ) : null}
 
         {searchResults.map((result) => {
           const alreadyFriend = friends.some((f) => f.userId === result.id);
@@ -318,6 +403,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  discardDraftBtn: { marginBottom: 8 },
+  discardDraftText: { fontSize: 12, fontWeight: '700', color: '#C0392B' },
   searchResultRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -347,4 +434,12 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   signOutText: { fontSize: 15, fontWeight: '600', color: '#E74C3C' },
+  clearDraftsBtn: {
+    borderRadius: 10,
+    backgroundColor: '#FCEBEC',
+    paddingVertical: 11,
+    alignItems: 'center',
+  },
+  clearDraftsBtnDisabled: { opacity: 0.7 },
+  clearDraftsText: { color: '#C0392B', fontWeight: '700' },
 });
