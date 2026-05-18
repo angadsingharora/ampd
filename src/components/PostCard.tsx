@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Post } from '../types';
 import VoteButtons from './VoteButtons';
@@ -18,9 +18,12 @@ interface Props {
   post: Post;
   userId?: string;
   currentVote?: 1 | -1 | null;
+  onEdit?: (post: Post) => void;
+  onBlock?: (post: Post) => void;
 }
 
-export default function PostCard({ post, userId, currentVote = null }: Props) {
+export default function PostCard({ post, userId, currentVote = null, onEdit, onBlock }: Props) {
+  const isOwner = userId && post.user_id === userId;
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -30,6 +33,16 @@ export default function PostCard({ post, userId, currentVote = null }: Props) {
         <Text style={styles.author}>
           {post.is_anonymous ? 'Anonymous' : (post.username ?? 'User')}
         </Text>
+        {!post.is_anonymous && !isOwner && userId && onBlock ? (
+          <TouchableOpacity onPress={() => onBlock(post)} style={styles.actionButton}>
+            <Text style={styles.actionText}>Block</Text>
+          </TouchableOpacity>
+        ) : null}
+        {isOwner && onEdit ? (
+          <TouchableOpacity onPress={() => onEdit(post)} style={styles.actionButton}>
+            <Text style={styles.actionText}>Edit</Text>
+          </TouchableOpacity>
+        ) : null}
         <Text style={styles.time}>{timeAgo(post.created_at)}</Text>
       </View>
 
@@ -90,6 +103,8 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#999',
   },
+  actionButton: { marginRight: 10 },
+  actionText: { color: '#6C5CE7', fontSize: 12, fontWeight: '700' },
   body: {
     fontSize: 15,
     lineHeight: 22,

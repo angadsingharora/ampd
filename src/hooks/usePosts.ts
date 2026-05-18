@@ -7,9 +7,19 @@ interface UsePostsOptions {
   userId?: string;
   bounds?: MapBounds;
   sort?: SortMode;
+  searchQuery?: string;
+  campus?: string;
+  blockedUserIds?: string[];
 }
 
-export function usePosts({ userId, bounds, sort = 'recent' }: UsePostsOptions = {}) {
+export function usePosts({
+  userId,
+  bounds,
+  sort = 'recent',
+  searchQuery,
+  campus,
+  blockedUserIds = [],
+}: UsePostsOptions = {}) {
   const [posts, setPosts] = useState<Post[]>([]);
   const [votes, setVotes] = useState<Record<string, 1 | -1>>({});
   const [loading, setLoading] = useState(true);
@@ -19,8 +29,9 @@ export function usePosts({ userId, bounds, sort = 'recent' }: UsePostsOptions = 
   const load = useCallback(async () => {
     setError(null);
     try {
-      const data = await fetchPosts({ bounds, sort });
-      setPosts(data);
+      const data = await fetchPosts({ bounds, sort, searchQuery, campus });
+      const blocked = new Set(blockedUserIds);
+      setPosts(data.filter((post) => !blocked.has(post.user_id)));
 
       if (userId && data.length > 0) {
         const postIds = data.map((p) => p.id);
@@ -33,7 +44,17 @@ export function usePosts({ userId, bounds, sort = 'recent' }: UsePostsOptions = 
     } finally {
       setLoading(false);
     }
-  }, [userId, bounds?.minLat, bounds?.maxLat, bounds?.minLng, bounds?.maxLng, sort]);
+  }, [
+    userId,
+    bounds?.minLat,
+    bounds?.maxLat,
+    bounds?.minLng,
+    bounds?.maxLng,
+    sort,
+    searchQuery,
+    campus,
+    blockedUserIds.join(','),
+  ]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);

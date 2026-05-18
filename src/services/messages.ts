@@ -72,31 +72,72 @@ export async function fetchConversationList(userId: string): Promise<Conversatio
   const partnerIds = Array.from(latestByPartner.keys());
   if (partnerIds.length === 0) return [];
 
+  const blockedPartnerIds = new Set<string>();
+
+  const [{ data: blockedByMe, error: blockedByMeError }, { data: blockedMe, error: blockedMeError }] = await Promise.all([
+    supabase
+      .from('user_blocks')
+      .select('blocked_id')
+      .eq('blocker_id', userId)
+      .in('blocked_id', partnerIds),
+    supabase
+      .from('user_blocks')
+      .select('blocker_id')
+      .eq('blocked_id', userId)
+      .in('blocker_id', partnerIds),
+  ]);
+  if (blockedByMeError) throw blockedByMeError;
+  if (blockedMeError) throw blockedMeError;
+
+  for (const row of blockedByMe ?? []) {
+    blockedPartnerIds.add(row.blocked_id as string);
+  }
+  for (const row of blockedMe ?? []) {
+    blockedPartnerIds.add(row.blocker_id as string);
+  }
+
+  const filteredPartnerIds = partnerIds.filter((id) => !blockedPartnerIds.has(id));
+  if (filteredPartnerIds.length === 0) return [];
+
   const { data: users, error: usersError } = await supabase
     .from('users')
     .select('id, username')
-    .in('id', partnerIds);
+    .in('id', filteredPartnerIds);
   if (usersError) throw usersError;
+
+  const { data: reads, error: readsError } = await supabase
+    .from('message_reads')
+    .select('partner_id, last_read_at')
+    .eq('user_id', userId);
+  if (readsError) throw readsError;
+
+  const readAtByPartner = new Map<string, string>();
+  for (const row of reads ?? []) {
+    readAtByPartner.set(row.partner_id as string, row.last_read_at as string);
+  }
 
   const usernameById = new Map<string, string>();
   for (const user of users ?? []) {
     usernameById.set(user.id, user.username);
   }
 
-  return partnerIds
-    .map((partnerId) => {
+  const rows: Conversation[] = filteredPartnerIds.flatMap((partnerId) => {
       const latest = latestByPartner.get(partnerId);
-      if (!latest) return null;
-      return {
+      if (!latest) return [];
+      const readAt = readAtByPartner.get(partnerId);
+      const unread =
+        latest.sender_id === partnerId &&
+        (!readAt || new Date(latest.created_at).getTime() > new Date(readAt).getTime());
+      return [{
         partner_id: partnerId,
         partner_username: usernameById.get(partnerId) ?? 'Unknown',
         last_message: latest.text,
         last_message_at: latest.created_at,
-      } satisfies Conversation;
-    })
-    .filter((item): item is Conversation => item !== null)
-    .sort(
+        unread_count: unread ? 1 : 0,
+      }];
+    });
+
+  return rows.sort(
       (a, b) => new Date(b.last_message_at).getTime() - new Date(a.last_message_at).getTime(),
     );
 }
-

@@ -13,6 +13,8 @@ import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { fetchConversation, sendMessage } from '../services/messages';
+import { getBlockRelations } from '../services/blocks';
+import { setConversationRead } from '../services/messageReads';
 import { clearChatDraft, getChatDraft, saveChatDraft } from '../services/postDrafts';
 import { supabase } from '../lib/supabase';
 import ChatBubble from '../components/ChatBubble';
@@ -27,6 +29,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   const [text, setText] = useState('');
   const [draftRestored, setDraftRestored] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(true);
+  const [blocked, setBlocked] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -35,8 +38,15 @@ export default function ChatScreen({ route, navigation }: Props) {
 
   const loadConversation = useCallback(async () => {
     if (!user) return;
+    const relations = await getBlockRelations(user.id);
+    setBlocked(relations.has(otherUserId));
+    if (relations.has(otherUserId)) {
+      setMessages([]);
+      return;
+    }
     const data = await fetchConversation(user.id, otherUserId);
     setMessages(data);
+    await setConversationRead(user.id, otherUserId);
   }, [otherUserId, user]);
 
   useEffect(() => {
@@ -114,7 +124,7 @@ export default function ChatScreen({ route, navigation }: Props) {
   );
 
   async function handleSend() {
-    if (!user) return;
+    if (!user || blocked) return;
     const trimmed = text.trim();
     if (!trimmed) return;
 
@@ -182,6 +192,7 @@ export default function ChatScreen({ route, navigation }: Props) {
         </TouchableOpacity>
       </View>
       {!user ? <Text style={styles.warning}>Sign in to chat.</Text> : null}
+      {blocked ? <Text style={styles.warning}>You cannot message this user.</Text> : null}
     </KeyboardAvoidingView>
   );
 }

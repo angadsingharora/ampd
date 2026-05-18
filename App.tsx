@@ -1,11 +1,13 @@
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
-import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, DefaultTheme, NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { ThemeProvider, useThemeSettings } from './src/context/ThemeContext';
 import TabNavigator from './src/navigation/TabNavigator';
 import CreatePostScreen from './src/screens/CreatePostScreen';
+import EditPostScreen from './src/screens/EditPostScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import SignUpScreen from './src/screens/SignUpScreen';
 import VerifyEmailScreen from './src/screens/VerifyEmailScreen';
@@ -41,6 +43,7 @@ function MainNavigator() {
           headerTintColor: '#6C5CE7',
         }}
       />
+      <RootStack.Screen name="EditPost" component={EditPostScreen} options={{ title: 'Edit Post' }} />
     </RootStack.Navigator>
   );
 }
@@ -59,14 +62,23 @@ function RootNavigator() {
   return session ? <MainNavigator /> : <AuthNavigator />;
 }
 
+function AppShell() {
+  const { darkMode } = useThemeSettings();
+  return (
+    <NavigationContainer theme={darkMode ? DarkTheme : DefaultTheme}>
+      <RootNavigator />
+      <StatusBar style={darkMode ? 'light' : 'dark'} />
+    </NavigationContainer>
+  );
+}
+
 export default function App() {
   return (
     <SafeAreaProvider>
       <AuthProvider>
-        <NavigationContainer>
-          <RootNavigator />
-        </NavigationContainer>
-        <StatusBar style="auto" />
+        <ThemeProvider>
+          <AppShell />
+        </ThemeProvider>
       </AuthProvider>
     </SafeAreaProvider>
   );

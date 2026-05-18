@@ -64,7 +64,10 @@ export default function ChatListScreen() {
             <View style={styles.rowBody}>
               <View style={styles.topRow}>
                 <Text style={styles.username}>@{item.partner_username}</Text>
-                <Text style={styles.time}>{formatRelativeTime(item.last_message_at)}</Text>
+                <View style={styles.metaRow}>
+                  {item.unread_count ? <View style={styles.unreadDot} /> : null}
+                  <Text style={styles.time}>{formatRelativeTime(item.last_message_at)}</Text>
+                </View>
               </View>
               <Text numberOfLines={1} style={styles.preview}>
                 {item.last_message}
@@ -100,10 +103,11 @@ const styles = StyleSheet.create({
   avatarText: { fontWeight: '700', color: '#6C5CE7' },
   rowBody: { flex: 1 },
   topRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  unreadDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#6C5CE7' },
   username: { fontSize: 15, fontWeight: '700', color: '#222' },
   time: { fontSize: 12, color: '#888' },
   preview: { marginTop: 4, fontSize: 13, color: '#666' },
   emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   emptyText: { color: '#999' },
 });
-

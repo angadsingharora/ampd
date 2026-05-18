@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
+import { useThemeSettings } from '../context/ThemeContext';
 import {
   searchUsers,
   sendFriendRequest,
@@ -21,6 +22,7 @@ import {
   type FriendWithProfile,
 } from '../services/friends';
 import { setMyLocationSharingEnabled } from '../services/liveLocations';
+import { getMyBlockedUserIds, unblockUser } from '../services/blocks';
 import FriendListItem from '../components/FriendListItem';
 import {
   clearAllDrafts,
@@ -32,6 +34,7 @@ import type { User } from '../types';
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
+  const { darkMode, setDarkMode } = useThemeSettings();
   const [sharingEnabled, setSharingEnabled] = useState(true);
   const [friends, setFriends] = useState<FriendWithProfile[]>([]);
   const [loadingFriends, setLoadingFriends] = useState(true);
@@ -39,6 +42,7 @@ export default function ProfileScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [searching, setSearching] = useState(false);
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [clearingDrafts, setClearingDrafts] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -59,6 +63,13 @@ export default function ProfileScreen() {
   useEffect(() => {
     loadFriends();
   }, [loadFriends]);
+
+  useEffect(() => {
+    if (!user) return;
+    getMyBlockedUserIds(user.id)
+      .then((ids) => setBlockedUserIds(ids))
+      .catch((err) => console.error('Failed to load blocked users:', err));
+  }, [user]);
 
   useEffect(() => {
     let mounted = true;
@@ -232,6 +243,50 @@ export default function ProfileScreen() {
           <Text style={styles.settingLabel}>Share with friends</Text>
           <Switch value={sharingEnabled} onValueChange={handleToggleSharing} />
         </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Appearance</Text>
+        <View style={styles.settingRow}>
+          <Text style={styles.settingLabel}>Dark mode</Text>
+          <Switch
+            value={darkMode}
+            onValueChange={(enabled) => {
+              setDarkMode(enabled).catch((err) => {
+                console.error('Failed to update dark mode:', err);
+                Alert.alert('Error', 'Could not update dark mode.');
+              });
+            }}
+          />
+        </View>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Blocked Users</Text>
+        {blockedUserIds.length === 0 ? (
+          <Text style={styles.emptyText}>No blocked users.</Text>
+        ) : (
+          blockedUserIds.map((blockedId) => (
+            <View key={blockedId} style={styles.searchResultRow}>
+              <Text style={styles.searchResultName}>{blockedId}</Text>
+              <TouchableOpacity
+                style={styles.unblockButton}
+                onPress={async () => {
+                  if (!user) return;
+                  try {
+                    await unblockUser(user.id, blockedId);
+                    setBlockedUserIds((prev) => prev.filter((id) => id !== blockedId));
+                  } catch (err) {
+                    console.error('Failed to unblock user:', err);
+                    Alert.alert('Error', 'Could not unblock user.');
+                  }
+                }}
+              >
+                <Text style={styles.unblockButtonText}>Unblock</Text>
+              </TouchableOpacity>
+            </View>
+          ))
+        )}
       </View>
 
       {/* Add Friends */}
@@ -442,4 +497,11 @@ const styles = StyleSheet.create({
   },
   clearDraftsBtnDisabled: { opacity: 0.7 },
   clearDraftsText: { color: '#C0392B', fontWeight: '700' },
+  unblockButton: {
+    backgroundColor: '#EEE8FF',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  unblockButtonText: { color: '#6C5CE7', fontWeight: '700', fontSize: 12 },
 });

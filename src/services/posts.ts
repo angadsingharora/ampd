@@ -5,12 +5,14 @@ interface FetchPostsOptions {
   bounds?: MapBounds;
   sort?: SortMode;
   limit?: number;
+  searchQuery?: string;
+  campus?: string;
 }
 
 export async function fetchPosts(options: FetchPostsOptions = {}): Promise<Post[]> {
-  const { bounds, sort = 'recent', limit = 50 } = options;
+  const { bounds, sort = 'recent', limit = 50, searchQuery, campus } = options;
 
-  let query = supabase.from('posts').select('*');
+  let query = supabase.from('posts').select('*, users(username, campus)');
 
   if (bounds) {
     query = query
@@ -30,7 +32,18 @@ export async function fetchPosts(options: FetchPostsOptions = {}): Promise<Post[
 
   const { data, error } = await query;
   if (error) throw error;
-  return (data as Post[]) ?? [];
+  const mapped = (data ?? []).map((row: any) => ({
+    ...row,
+    username: row.users?.username ?? undefined,
+    campus: row.users?.campus ?? undefined,
+  })) as Post[];
+
+  return mapped.filter((post) => {
+    const matchesText =
+      !searchQuery || post.text.toLowerCase().includes(searchQuery.trim().toLowerCase());
+    const matchesCampus = !campus || (post.campus ?? '').toLowerCase() === campus.toLowerCase();
+    return matchesText && matchesCampus;
+  });
 }
 
 export async function fetchPostsInBounds(
@@ -55,6 +68,22 @@ export async function createPost(
       lng: location.lng,
       is_anonymous: options.isAnonymous ?? true,
     })
+    .select('*')
+    .single();
+
+  if (error) throw error;
+  return data as Post;
+}
+
+export async function updatePostText(postId: string, userId: string, text: string): Promise<Post> {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error('Post text cannot be empty.');
+
+  const { data, error } = await supabase
+    .from('posts')
+    .update({ text: trimmed })
+    .eq('id', postId)
+    .eq('user_id', userId)
     .select('*')
     .single();
 

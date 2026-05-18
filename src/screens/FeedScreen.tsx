@@ -7,6 +7,8 @@ import {
   StyleSheet,
   RefreshControl,
   ActivityIndicator,
+  TextInput,
+  Alert,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -15,6 +17,7 @@ import * as Location from 'expo-location';
 import PostCard from '../components/PostCard';
 import { usePosts } from '../hooks/usePosts';
 import { useAuth } from '../context/AuthContext';
+import { blockUser, getBlockRelations } from '../services/blocks';
 import type { RootStackParamList, SortMode, MapBounds } from '../types';
 
 const FEED_RADIUS_MILES = 2;
@@ -39,6 +42,16 @@ export default function FeedScreen() {
   const [sort, setSort] = useState<SortMode>('recent');
   const [bounds, setBounds] = useState<MapBounds | undefined>(undefined);
   const [locationError, setLocationError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [campusFilter, setCampusFilter] = useState('');
+  const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!user) return;
+    getBlockRelations(user.id)
+      .then((ids) => setBlockedUserIds([...ids]))
+      .catch((err) => console.error('Failed to load block list:', err));
+  }, [user]);
 
   useEffect(() => {
     (async () => {
@@ -64,6 +77,9 @@ export default function FeedScreen() {
     userId: user?.id,
     bounds,
     sort,
+    searchQuery,
+    campus: campusFilter.trim() || undefined,
+    blockedUserIds,
   });
 
   useEffect(() => {
@@ -99,6 +115,25 @@ export default function FeedScreen() {
             post={item}
             userId={user?.id}
             currentVote={votes[item.id] ?? null}
+            onEdit={(post) => navigation.navigate('EditPost', { postId: post.id, initialText: post.text })}
+            onBlock={(post) => {
+              if (!user) return;
+              Alert.alert('Block user?', 'You will no longer see this user in feed or chats.', [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Block',
+                  style: 'destructive',
+                  onPress: async () => {
+                    try {
+                      await blockUser(user.id, post.user_id);
+                      setBlockedUserIds((prev) => [...new Set([...prev, post.user_id])]);
+                    } catch (err) {
+                      console.error('Failed to block user:', err);
+                    }
+                  },
+                },
+              ]);
+            }}
           />
         )}
         contentContainerStyle={styles.list}
@@ -110,6 +145,21 @@ export default function FeedScreen() {
             {error && <Text style={styles.listErrorText}>{error}</Text>}
 
             <View style={styles.sortRow}>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search posts..."
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholderTextColor="#999"
+              />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Campus filter (e.g. ucla.edu)"
+                value={campusFilter}
+                onChangeText={setCampusFilter}
+                placeholderTextColor="#999"
+                autoCapitalize="none"
+              />
               <TouchableOpacity
                 style={[styles.sortButton, sort === 'recent' && styles.sortButtonActive]}
                 onPress={() => setSort('recent')}
@@ -177,9 +227,17 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   sortRow: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 8,
     marginBottom: 16,
+  },
+  searchInput: {
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+    backgroundColor: '#fff',
   },
   sortButton: {
     paddingHorizontal: 16,

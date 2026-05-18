@@ -5,6 +5,7 @@
 export type RootStackParamList = {
   Main: undefined;
   CreatePost: undefined;
+  EditPost: { postId: string; initialText: string };
   Auth: undefined;
 };
 
@@ -88,6 +89,7 @@ export interface Post {
   score: number;
   created_at: string;
   username?: string;
+  campus?: string;
 }
 
 export interface Vote {
@@ -179,6 +181,7 @@ export interface Conversation {
   partner_username: string;
   last_message: string;
   last_message_at: string;
+  unread_count?: number;
 }
 
 export interface GroupConversation {
