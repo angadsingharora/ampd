@@ -15,6 +15,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import * as Location from 'expo-location';
 import PostCard from '../components/PostCard';
+import CampusPulseCard from '../components/CampusPulseCard';
 import { usePosts } from '../hooks/usePosts';
 import { useAuth } from '../context/AuthContext';
 import { blockUser, getBlockRelations } from '../services/blocks';
@@ -45,6 +46,7 @@ export default function FeedScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [campusFilter, setCampusFilter] = useState('');
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
+  const [feedScope, setFeedScope] = useState<'nearby' | 'global'>('nearby');
 
   useEffect(() => {
     if (!user) return;
@@ -58,6 +60,7 @@ export default function FeedScreen() {
       const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
         setLocationError('Location permission denied. Showing all posts.');
+        setFeedScope('global');
         return;
       }
       try {
@@ -69,13 +72,14 @@ export default function FeedScreen() {
         );
       } catch {
         setLocationError('Could not get location. Showing all posts.');
+        setFeedScope('global');
       }
     })();
   }, []);
 
   const { posts, votes, loading, refreshing, error, refresh, reload } = usePosts({
     userId: user?.id,
-    bounds,
+    bounds: feedScope === 'nearby' ? bounds : undefined,
     sort,
     searchQuery,
     campus: campusFilter.trim() || undefined,
@@ -143,6 +147,13 @@ export default function FeedScreen() {
               <Text style={styles.locationWarning}>{locationError}</Text>
             )}
             {error && <Text style={styles.listErrorText}>{error}</Text>}
+            <CampusPulseCard
+              posts={posts}
+              scope={feedScope}
+              onScopeChange={setFeedScope}
+              radiusMiles={FEED_RADIUS_MILES}
+              nearbyEnabled={Boolean(bounds)}
+            />
 
             <View style={styles.sortRow}>
               <TextInput

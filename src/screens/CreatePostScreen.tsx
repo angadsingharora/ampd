@@ -22,6 +22,8 @@ export default function CreatePostScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(true);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigation = useNavigation();
 
@@ -56,15 +58,36 @@ export default function CreatePostScreen() {
     if (loadingDraft) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
-      savePostDraft(text).catch((err) => {
-        console.error('Failed to save post draft', err);
-      });
+      (async () => {
+        setSaveState('saving');
+        try {
+          await savePostDraft(text);
+          setSaveState('saved');
+          setSavedAt(new Date());
+        } catch (err) {
+          setSaveState('error');
+          console.error('Failed to save post draft', err);
+        }
+      })();
     }, 350);
 
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [text, loadingDraft]);
+
+  async function handleManualSaveDraft() {
+    setSaveState('saving');
+    try {
+      await savePostDraft(text);
+      setSaveState('saved');
+      setSavedAt(new Date());
+    } catch (err) {
+      setSaveState('error');
+      Alert.alert('Error', 'Failed to save draft.');
+      console.error(err);
+    }
+  }
 
   async function handleSubmit() {
     if (!canSubmit) return;
@@ -89,11 +112,24 @@ export default function CreatePostScreen() {
       await clearPostDraft();
       setText('');
       setDraftRestored(false);
+      setSaveState('idle');
+      setSavedAt(null);
     } catch (err) {
       Alert.alert('Error', 'Failed to discard draft.');
       console.error(err);
     }
   }
+
+  const saveStatusText =
+    saveState === 'saving'
+      ? 'Saving draft...'
+      : saveState === 'saved'
+      ? savedAt
+        ? `Draft saved at ${savedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+        : 'Draft saved'
+      : saveState === 'error'
+      ? 'Draft save failed. Tap Save draft to retry.'
+      : 'Draft autosaves while you type';
 
   return (
     <KeyboardAvoidingView
@@ -128,6 +164,18 @@ export default function CreatePostScreen() {
         <Text style={styles.charCount}>
           {text.length}/{MAX_LENGTH}
         </Text>
+
+        <View style={styles.saveRow}>
+          <Text style={[styles.saveStatus, saveState === 'error' && styles.saveStatusError]}>
+            {saveStatusText}
+          </Text>
+          <TouchableOpacity
+            onPress={handleManualSaveDraft}
+            disabled={loadingDraft || submitting || saveState === 'saving'}
+          >
+            <Text style={styles.manualSaveText}>Save draft</Text>
+          </TouchableOpacity>
+        </View>
 
         <TouchableOpacity
           style={[styles.button, !canSubmit && styles.buttonDisabled]}
@@ -175,8 +223,18 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     color: '#999',
     fontSize: 13,
-    marginBottom: 16,
+    marginBottom: 10,
   },
+  saveRow: {
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  saveStatus: { color: '#6B7280', fontSize: 12, flex: 1 },
+  saveStatusError: { color: '#C0392B' },
+  manualSaveText: { color: '#6C5CE7', fontWeight: '700', fontSize: 13 },
   button: {
     backgroundColor: '#6C5CE7',
     borderRadius: 12,
