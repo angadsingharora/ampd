@@ -9,6 +9,7 @@ import {
   Switch,
   Alert,
   ActivityIndicator,
+  Share,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
@@ -175,6 +176,28 @@ export default function ProfileScreen() {
     ]);
   }
 
+  async function handleShareProfile() {
+    if (!user) return;
+    try {
+      const profileUrl = `https://ampd.app/u/${encodeURIComponent(user.username)}`;
+      const message = [
+        `Add me on Ampd: @${user.username}`,
+        `Campus: ${user.campus}`,
+        `Friends: ${acceptedFriends.length}`,
+        profileUrl,
+      ].join('\n');
+
+      await Share.share({
+        title: `@${user.username} on Ampd`,
+        message,
+        url: profileUrl,
+      });
+    } catch (err) {
+      console.error('Failed to share profile:', err);
+      Alert.alert('Error', 'Could not open share sheet.');
+    }
+  }
+
   async function handleClearAllDrafts() {
     setClearingDrafts(true);
     try {
@@ -212,6 +235,10 @@ export default function ProfileScreen() {
             </View>
           </View>
         </View>
+        <TouchableOpacity style={styles.shareProfileBtn} onPress={handleShareProfile}>
+          <Ionicons name="share-social-outline" size={16} color="#fff" />
+          <Text style={styles.shareProfileText}>Share Profile (P2U)</Text>
+        </TouchableOpacity>
       </View>
 
       <View style={styles.section}>
@@ -504,4 +531,16 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   unblockButtonText: { color: '#6C5CE7', fontWeight: '700', fontSize: 12 },
+  shareProfileBtn: {
+    marginTop: 14,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#1F8BFF',
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  shareProfileText: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });
