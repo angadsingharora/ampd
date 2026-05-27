@@ -107,6 +107,7 @@ export default function FeedScreen() {
     setCampusFilter('');
     setSort('recent');
   };
+  const isFilteredEmpty = posts.length === 0 && hasActiveFilters;
 
   useEffect(() => {
     return navigation.addListener('focus', reload);
@@ -178,6 +179,11 @@ export default function FeedScreen() {
             />
 
             <View style={styles.sortRow}>
+              <View style={styles.feedMetaRow}>
+                <Text style={styles.feedMetaText}>
+                  {posts.length} {posts.length === 1 ? 'post' : 'posts'} • {feedScope} • {sort}
+                </Text>
+              </View>
               <TextInput
                 style={styles.searchInput}
                 placeholder="Search posts..."
@@ -223,7 +229,16 @@ export default function FeedScreen() {
         ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons name="newspaper-outline" size={48} color="#ccc" />
-            <Text style={styles.emptyText}>No posts nearby. Be the first!</Text>
+            <Text style={styles.emptyText}>
+              {isFilteredEmpty
+                ? 'No posts match your current filters.'
+                : 'No posts nearby. Be the first!'}
+            </Text>
+            {isFilteredEmpty && (
+              <TouchableOpacity style={styles.emptyClearButton} onPress={clearFilters}>
+                <Text style={styles.emptyClearText}>Clear filters</Text>
+              </TouchableOpacity>
+            )}
           </View>
         }
       />
@@ -268,6 +283,19 @@ const styles = StyleSheet.create({
     flexDirection: 'column',
     gap: 8,
     marginBottom: 16,
+  },
+  feedMetaRow: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#EFEAFE',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  feedMetaText: {
+    color: '#5B4BC4',
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'capitalize',
   },
   searchInput: {
     borderWidth: 1,
@@ -317,6 +345,18 @@ const styles = StyleSheet.create({
   retryButtonText: { color: '#fff', fontWeight: '600' },
   empty: { alignItems: 'center', marginTop: 80 },
   emptyText: { color: '#999', marginTop: 12, fontSize: 16 },
+  emptyClearButton: {
+    marginTop: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#6C5CE7',
+  },
+  emptyClearText: {
+    color: '#fff',
+    fontWeight: '600',
+    fontSize: 13,
+  },
   fab: {
     position: 'absolute',
     right: 20,
