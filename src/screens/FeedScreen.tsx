@@ -45,6 +45,8 @@ export default function FeedScreen() {
   const [locationError, setLocationError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [campusFilter, setCampusFilter] = useState('');
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState('');
+  const [debouncedCampusFilter, setDebouncedCampusFilter] = useState('');
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [feedScope, setFeedScope] = useState<'nearby' | 'global'>('nearby');
 
@@ -77,14 +79,34 @@ export default function FeedScreen() {
     })();
   }, []);
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearchQuery(searchQuery), 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedCampusFilter(campusFilter), 350);
+    return () => clearTimeout(timer);
+  }, [campusFilter]);
+
   const { posts, votes, loading, refreshing, error, refresh, reload } = usePosts({
     userId: user?.id,
     bounds: feedScope === 'nearby' ? bounds : undefined,
     sort,
-    searchQuery,
-    campus: campusFilter.trim() || undefined,
+    searchQuery: debouncedSearchQuery,
+    campus: debouncedCampusFilter.trim() || undefined,
     blockedUserIds,
   });
+
+  const hasActiveFilters = Boolean(
+    debouncedSearchQuery.trim() || debouncedCampusFilter.trim() || sort !== 'recent',
+  );
+
+  const clearFilters = () => {
+    setSearchQuery('');
+    setCampusFilter('');
+    setSort('recent');
+  };
 
   useEffect(() => {
     return navigation.addListener('focus', reload);
@@ -187,6 +209,11 @@ export default function FeedScreen() {
                   Top
                 </Text>
               </TouchableOpacity>
+              {hasActiveFilters && (
+                <TouchableOpacity style={styles.clearButton} onPress={clearFilters}>
+                  <Text style={styles.clearButtonText}>Clear filters</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         }
@@ -266,6 +293,20 @@ const styles = StyleSheet.create({
   },
   sortTextActive: {
     color: '#fff',
+  },
+  clearButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#F1F1F1',
+    borderWidth: 1,
+    borderColor: '#DDD',
+    alignSelf: 'flex-start',
+  },
+  clearButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#444',
   },
   retryButton: {
     backgroundColor: '#6C5CE7',
