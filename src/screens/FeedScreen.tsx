@@ -19,6 +19,11 @@ import CampusPulseCard from '../components/CampusPulseCard';
 import { usePosts } from '../hooks/usePosts';
 import { useAuth } from '../context/AuthContext';
 import { blockUser, getBlockRelations } from '../services/blocks';
+import {
+  clearFeedPreferencesDraft,
+  getFeedPreferencesDraft,
+  saveFeedPreferencesDraft,
+} from '../services/postDrafts';
 import type { RootStackParamList, SortMode, MapBounds } from '../types';
 
 const FEED_RADIUS_MILES = 2;
@@ -49,6 +54,7 @@ export default function FeedScreen() {
   const [debouncedCampusFilter, setDebouncedCampusFilter] = useState('');
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [feedScope, setFeedScope] = useState<'nearby' | 'global'>('nearby');
+  const [loadingPreferences, setLoadingPreferences] = useState(true);
 
   useEffect(() => {
     if (!user) return;
@@ -56,6 +62,40 @@ export default function FeedScreen() {
       .then((ids) => setBlockedUserIds([...ids]))
       .catch((err) => console.error('Failed to load block list:', err));
   }, [user]);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const draft = await getFeedPreferencesDraft();
+        if (!mounted || !draft) return;
+        setSearchQuery(draft.searchQuery);
+        setCampusFilter(draft.campusFilter);
+        setSort(draft.sort);
+        setFeedScope(draft.scope);
+      } catch (err) {
+        console.error('Failed to load feed preferences draft', err);
+      } finally {
+        if (mounted) setLoadingPreferences(false);
+      }
+    })();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loadingPreferences) return;
+    const timer = setTimeout(() => {
+      saveFeedPreferencesDraft({
+        searchQuery,
+        campusFilter,
+        sort,
+        scope: feedScope,
+      }).catch((err) => console.error('Failed to save feed preferences draft', err));
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [searchQuery, campusFilter, sort, feedScope, loadingPreferences]);
 
   useEffect(() => {
     (async () => {
@@ -106,6 +146,10 @@ export default function FeedScreen() {
     setSearchQuery('');
     setCampusFilter('');
     setSort('recent');
+    setFeedScope('nearby');
+    clearFeedPreferencesDraft().catch((err) =>
+      console.error('Failed to clear feed preferences draft', err),
+    );
   };
   const isFilteredEmpty = posts.length === 0 && hasActiveFilters;
 

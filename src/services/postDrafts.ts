@@ -7,6 +7,7 @@ const COMMUNITY_FORM_DRAFT_KEY = 'create_community_draft_v1';
 const DATING_PROFILE_DRAFT_KEY = 'dating_profile_setup_draft_v1';
 const COMMUNITY_SEARCH_DRAFT_KEY = 'community_search_draft_v1';
 const FRIEND_SEARCH_DRAFT_KEY = 'friend_search_draft_v1';
+const FEED_PREFERENCES_DRAFT_KEY = 'feed_preferences_draft_v1';
 const CHAT_DRAFT_INDEX_KEY = 'chat_draft_index_v1';
 const GROUP_CHAT_DRAFT_INDEX_KEY = 'group_chat_draft_index_v1';
 
@@ -216,6 +217,46 @@ export async function clearFriendSearchDraft(): Promise<void> {
   await SecureStore.deleteItemAsync(FRIEND_SEARCH_DRAFT_KEY);
 }
 
+export type FeedPreferencesDraft = {
+  searchQuery: string;
+  campusFilter: string;
+  sort: 'recent' | 'top';
+  scope: 'nearby' | 'global';
+};
+
+export async function getFeedPreferencesDraft(): Promise<FeedPreferencesDraft | null> {
+  const value = await SecureStore.getItemAsync(FEED_PREFERENCES_DRAFT_KEY);
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<FeedPreferencesDraft>;
+    return {
+      searchQuery: parsed.searchQuery ?? '',
+      campusFilter: parsed.campusFilter ?? '',
+      sort: parsed.sort === 'top' ? 'top' : 'recent',
+      scope: parsed.scope === 'global' ? 'global' : 'nearby',
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function saveFeedPreferencesDraft(draft: FeedPreferencesDraft): Promise<void> {
+  const isDefault =
+    !draft.searchQuery.trim() &&
+    !draft.campusFilter.trim() &&
+    draft.sort === 'recent' &&
+    draft.scope === 'nearby';
+  if (isDefault) {
+    await SecureStore.deleteItemAsync(FEED_PREFERENCES_DRAFT_KEY);
+    return;
+  }
+  await SecureStore.setItemAsync(FEED_PREFERENCES_DRAFT_KEY, JSON.stringify(draft));
+}
+
+export async function clearFeedPreferencesDraft(): Promise<void> {
+  await SecureStore.deleteItemAsync(FEED_PREFERENCES_DRAFT_KEY);
+}
+
 export async function clearAllDrafts(): Promise<void> {
   await Promise.all([
     clearPostDraft(),
@@ -223,6 +264,7 @@ export async function clearAllDrafts(): Promise<void> {
     clearDatingProfileDraft(),
     clearCommunitySearchDraft(),
     clearFriendSearchDraft(),
+    clearFeedPreferencesDraft(),
   ]);
 
   const [chatIndex, groupIndex] = await Promise.all([
