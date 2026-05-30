@@ -5,12 +5,13 @@ interface FetchPostsOptions {
   bounds?: MapBounds;
   sort?: SortMode;
   limit?: number;
+  offset?: number;
   searchQuery?: string;
   campus?: string;
 }
 
 export async function fetchPosts(options: FetchPostsOptions = {}): Promise<Post[]> {
-  const { bounds, sort = 'recent', limit = 50, searchQuery, campus } = options;
+  const { bounds, sort = 'recent', limit = 20, offset = 0, searchQuery, campus } = options;
 
   let query = supabase.from('posts').select('*, users(username, campus)');
 
@@ -28,7 +29,7 @@ export async function fetchPosts(options: FetchPostsOptions = {}): Promise<Post[
     query = query.order('created_at', { ascending: false });
   }
 
-  query = query.limit(limit);
+  query = query.range(offset, offset + limit - 1);
 
   const { data, error } = await query;
   if (error) throw error;

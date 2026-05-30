@@ -20,9 +20,21 @@ interface Props {
   currentVote?: 1 | -1 | null;
   onEdit?: (post: Post) => void;
   onBlock?: (post: Post) => void;
+  onToggleSave?: (post: Post) => void;
+  onMuteUser?: (post: Post) => void;
+  saved?: boolean;
 }
 
-export default function PostCard({ post, userId, currentVote = null, onEdit, onBlock }: Props) {
+export default function PostCard({
+  post,
+  userId,
+  currentVote = null,
+  onEdit,
+  onBlock,
+  onToggleSave,
+  onMuteUser,
+  saved = false,
+}: Props) {
   const isOwner = userId && post.user_id === userId;
   return (
     <View style={styles.card}>
@@ -38,6 +50,11 @@ export default function PostCard({ post, userId, currentVote = null, onEdit, onB
             <Text style={styles.actionText}>Block</Text>
           </TouchableOpacity>
         ) : null}
+        {!post.is_anonymous && !isOwner && userId && onMuteUser ? (
+          <TouchableOpacity onPress={() => onMuteUser(post)} style={styles.actionButton}>
+            <Text style={styles.actionText}>Mute</Text>
+          </TouchableOpacity>
+        ) : null}
         {isOwner && onEdit ? (
           <TouchableOpacity onPress={() => onEdit(post)} style={styles.actionButton}>
             <Text style={styles.actionText}>Edit</Text>
@@ -49,6 +66,12 @@ export default function PostCard({ post, userId, currentVote = null, onEdit, onB
       <Text style={styles.body}>{post.text}</Text>
 
       <View style={styles.footer}>
+        {onToggleSave ? (
+          <TouchableOpacity onPress={() => onToggleSave(post)} style={styles.saveBtn}>
+            <Ionicons name={saved ? 'bookmark' : 'bookmark-outline'} size={16} color="#6C5CE7" />
+            <Text style={styles.saveBtnText}>{saved ? 'Saved' : 'Save'}</Text>
+          </TouchableOpacity>
+        ) : null}
         {userId ? (
           <VoteButtons
             postId={post.id}
@@ -114,7 +137,14 @@ const styles = StyleSheet.create({
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
+  saveBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  saveBtnText: { color: '#6C5CE7', fontSize: 12, fontWeight: '700' },
   scoreOnly: {
     flexDirection: 'row',
     alignItems: 'center',

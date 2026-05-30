@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
   TextInput,
   Alert,
+  ListRenderItem,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -18,13 +19,20 @@ import PostCard from '../components/PostCard';
 import CampusPulseCard from '../components/CampusPulseCard';
 import { usePosts } from '../hooks/usePosts';
 import { useAuth } from '../context/AuthContext';
-import { blockUser, getBlockRelations } from '../services/blocks';
+import { blockUser, getBlockRelations, unblockUser } from '../services/blocks';
 import {
   clearFeedPreferencesDraft,
+  FeedPreset,
+  getFeedMuteDraft,
   getFeedPreferencesDraft,
+  getFeedPresets,
+  getSavedPostIds,
   saveFeedPreferencesDraft,
+  saveFeedMuteDraft,
+  saveFeedPresets,
+  saveSavedPostIds,
 } from '../services/postDrafts';
-import type { RootStackParamList, SortMode, MapBounds } from '../types';
+import type { RootStackParamList, SortMode, MapBounds, Post } from '../types';
 
 const FEED_RADIUS_MILES = 2;
 const milesToDegLat = (miles: number) => miles / 69.0;
@@ -55,6 +63,12 @@ export default function FeedScreen() {
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [feedScope, setFeedScope] = useState<'nearby' | 'global'>('nearby');
   const [loadingPreferences, setLoadingPreferences] = useState(true);
+  const [savedPostIds, setSavedPostIds] = useState<string[]>([]);
+  const [savedOnly, setSavedOnly] = useState(false);
+  const [mutedUserIds, setMutedUserIds] = useState<string[]>([]);
+  const [mutedKeywords, setMutedKeywords] = useState<string[]>([]);
+  const [keywordInput, setKeywordInput] = useState('');
+  const [presets, setPresets] = useState<FeedPreset[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -73,6 +87,15 @@ export default function FeedScreen() {
         setCampusFilter(draft.campusFilter);
         setSort(draft.sort);
         setFeedScope(draft.scope);
+        const [saved, muteDraft, savedPresets] = await Promise.all([
+          getSavedPostIds(),
+          getFeedMuteDraft(),
+          getFeedPresets(),
+        ]);
+        setSavedPostIds(saved);
+        setMutedUserIds(muteDraft.userIds);
+        setMutedKeywords(muteDraft.keywords);
+        setPresets(savedPresets);
       } catch (err) {
         console.error('Failed to load feed preferences draft', err);
       } finally {
@@ -96,6 +119,23 @@ export default function FeedScreen() {
     }, 350);
     return () => clearTimeout(timer);
   }, [searchQuery, campusFilter, sort, feedScope, loadingPreferences]);
+
+  useEffect(() => {
+    if (loadingPreferences) return;
+    saveSavedPostIds(savedPostIds).catch((err) => console.error('Failed to save bookmarks', err));
+  }, [savedPostIds, loadingPreferences]);
+
+  useEffect(() => {
+    if (loadingPreferences) return;
+    saveFeedMuteDraft({ userIds: mutedUserIds, keywords: mutedKeywords }).catch((err) =>
+      console.error('Failed to save mute settings', err),
+    );
+  }, [mutedUserIds, mutedKeywords, loadingPreferences]);
+
+  useEffect(() => {
+    if (loadingPreferences) return;
+    saveFeedPresets(presets).catch((err) => console.error('Failed to save presets', err));
+  }, [presets, loadingPreferences]);
 
   useEffect(() => {
     (async () => {
@@ -129,14 +169,17 @@ export default function FeedScreen() {
     return () => clearTimeout(timer);
   }, [campusFilter]);
 
-  const { posts, votes, loading, refreshing, error, refresh, reload } = usePosts({
+  const { posts, votes, loading, loadingMore, hasMore, refreshing, error, refresh, reload, loadMore } = usePosts({
     userId: user?.id,
     bounds: feedScope === 'nearby' ? bounds : undefined,
     sort,
     searchQuery: debouncedSearchQuery,
     campus: debouncedCampusFilter.trim() || undefined,
     blockedUserIds,
+    mutedUserIds,
+    mutedKeywords,
   });
+  const visiblePosts = savedOnly ? posts.filter((post) => savedPostIds.includes(post.id)) : posts;
 
   const hasActiveFilters = Boolean(
     debouncedSearchQuery.trim() || debouncedCampusFilter.trim() || sort !== 'recent',
@@ -147,11 +190,13 @@ export default function FeedScreen() {
     setCampusFilter('');
     setSort('recent');
     setFeedScope('nearby');
+    setSavedOnly(false);
     clearFeedPreferencesDraft().catch((err) =>
       console.error('Failed to clear feed preferences draft', err),
     );
   };
   const isFilteredEmpty = posts.length === 0 && hasActiveFilters;
+  const isSavedFilteredEmpty = visiblePosts.length === 0 && savedOnly;
 
   useEffect(() => {
     return navigation.addListener('focus', reload);
@@ -176,37 +221,88 @@ export default function FeedScreen() {
     );
   }
 
+  const toggleSavePost = (post: Post) => {
+    setSavedPostIds((prev) =>
+      prev.includes(post.id) ? prev.filter((id) => id !== post.id) : [...prev, post.id],
+    );
+  };
+
+  const applyPreset = (preset: FeedPreset) => {
+    setSearchQuery(preset.searchQuery);
+    setCampusFilter(preset.campusFilter);
+    setSort(preset.sort);
+    setFeedScope(preset.scope);
+  };
+
+  const handleSaveCurrentPreset = () => {
+    const next: FeedPreset = {
+      id: `${Date.now()}`,
+      name: `Preset ${presets.length + 1}`,
+      searchQuery,
+      campusFilter,
+      sort,
+      scope: feedScope,
+    };
+    setPresets((prev) => [next, ...prev].slice(0, 6));
+  };
+
+  const addKeywordMute = () => {
+    const keyword = keywordInput.trim().toLowerCase();
+    if (!keyword) return;
+    setMutedKeywords((prev) => [...new Set([...prev, keyword])]);
+    setKeywordInput('');
+  };
+
+  const renderPost: ListRenderItem<Post> = ({ item }) => (
+    <PostCard
+      post={item}
+      userId={user?.id}
+      saved={savedPostIds.includes(item.id)}
+      onToggleSave={toggleSavePost}
+      onMuteUser={(post) => {
+        if (!post.is_anonymous) setMutedUserIds((prev) => [...new Set([...prev, post.user_id])]);
+      }}
+      currentVote={votes[item.id] ?? null}
+      onEdit={(post) => navigation.navigate('EditPost', { postId: post.id, initialText: post.text })}
+      onBlock={(post) => {
+        if (!user) return;
+        Alert.alert('Block user?', 'You will no longer see this user in feed or chats.', [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Block',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                await blockUser(user.id, post.user_id);
+                setBlockedUserIds((prev) => [...new Set([...prev, post.user_id])]);
+                Alert.alert('User blocked', 'Tap Undo to unblock.', [
+                  {
+                    text: 'Undo',
+                    onPress: async () => {
+                      await unblockUser(user.id, post.user_id);
+                      setBlockedUserIds((prev) => prev.filter((id) => id !== post.user_id));
+                    },
+                  },
+                  { text: 'OK' },
+                ]);
+              } catch (err) {
+                console.error('Failed to block user:', err);
+              }
+            },
+          },
+        ]);
+      }}
+    />
+  );
+
   return (
     <View style={styles.container}>
       <FlatList
-        data={posts}
+        data={visiblePosts}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => (
-          <PostCard
-            post={item}
-            userId={user?.id}
-            currentVote={votes[item.id] ?? null}
-            onEdit={(post) => navigation.navigate('EditPost', { postId: post.id, initialText: post.text })}
-            onBlock={(post) => {
-              if (!user) return;
-              Alert.alert('Block user?', 'You will no longer see this user in feed or chats.', [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Block',
-                  style: 'destructive',
-                  onPress: async () => {
-                    try {
-                      await blockUser(user.id, post.user_id);
-                      setBlockedUserIds((prev) => [...new Set([...prev, post.user_id])]);
-                    } catch (err) {
-                      console.error('Failed to block user:', err);
-                    }
-                  },
-                },
-              ]);
-            }}
-          />
-        )}
+        renderItem={renderPost}
+        onEndReachedThreshold={0.35}
+        onEndReached={loadMore}
         contentContainerStyle={styles.list}
         ListHeaderComponent={
           <View>
@@ -259,6 +355,54 @@ export default function FeedScreen() {
                   Top
                 </Text>
               </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.sortButton, savedOnly && styles.sortButtonActive]}
+                onPress={() => setSavedOnly((prev) => !prev)}
+              >
+                <Text style={[styles.sortText, savedOnly && styles.sortTextActive]}>Saved</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.clearButton} onPress={handleSaveCurrentPreset}>
+                <Text style={styles.clearButtonText}>Save preset</Text>
+              </TouchableOpacity>
+              {presets.length > 0 && (
+                <View style={styles.presetRow}>
+                  {presets.map((preset) => (
+                    <TouchableOpacity
+                      key={preset.id}
+                      style={styles.presetChip}
+                      onPress={() => applyPreset(preset)}
+                      onLongPress={() =>
+                        setPresets((prev) => prev.filter((p) => p.id !== preset.id))
+                      }
+                    >
+                      <Text style={styles.presetText}>{preset.name}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Mute keyword (press enter)"
+                value={keywordInput}
+                onChangeText={setKeywordInput}
+                onSubmitEditing={addKeywordMute}
+                placeholderTextColor="#999"
+              />
+              {mutedKeywords.length > 0 && (
+                <View style={styles.presetRow}>
+                  {mutedKeywords.map((keyword) => (
+                    <TouchableOpacity
+                      key={keyword}
+                      style={styles.muteChip}
+                      onPress={() =>
+                        setMutedKeywords((prev) => prev.filter((k) => k !== keyword))
+                      }
+                    >
+                      <Text style={styles.muteChipText}>#{keyword} ✕</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
               {hasActiveFilters && (
                 <TouchableOpacity style={styles.clearButton} onPress={clearFilters}>
                   <Text style={styles.clearButtonText}>Clear filters</Text>
@@ -274,7 +418,9 @@ export default function FeedScreen() {
           <View style={styles.empty}>
             <Ionicons name="newspaper-outline" size={48} color="#ccc" />
             <Text style={styles.emptyText}>
-              {isFilteredEmpty
+              {isSavedFilteredEmpty
+                ? 'No saved posts yet.'
+                : isFilteredEmpty
                 ? 'No posts match your current filters.'
                 : 'No posts nearby. Be the first!'}
             </Text>
@@ -284,6 +430,13 @@ export default function FeedScreen() {
               </TouchableOpacity>
             )}
           </View>
+        }
+        ListFooterComponent={
+          hasMore && !savedOnly ? (
+            <View style={styles.footerLoader}>
+              {loadingMore ? <ActivityIndicator size="small" color="#6C5CE7" /> : null}
+            </View>
+          ) : null
         }
       />
 
@@ -380,6 +533,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#444',
   },
+  presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  presetChip: {
+    backgroundColor: '#EEE8FF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  presetText: { color: '#5B4BC4', fontWeight: '600', fontSize: 12 },
+  muteChip: {
+    backgroundColor: '#FFEDEB',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+  },
+  muteChipText: { color: '#B03A2E', fontWeight: '600', fontSize: 12 },
   retryButton: {
     backgroundColor: '#6C5CE7',
     borderRadius: 10,
@@ -401,6 +569,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 13,
   },
+  footerLoader: { paddingVertical: 12 },
   fab: {
     position: 'absolute',
     right: 20,

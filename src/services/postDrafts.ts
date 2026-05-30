@@ -8,6 +8,9 @@ const DATING_PROFILE_DRAFT_KEY = 'dating_profile_setup_draft_v1';
 const COMMUNITY_SEARCH_DRAFT_KEY = 'community_search_draft_v1';
 const FRIEND_SEARCH_DRAFT_KEY = 'friend_search_draft_v1';
 const FEED_PREFERENCES_DRAFT_KEY = 'feed_preferences_draft_v1';
+const FEED_PRESETS_KEY = 'feed_presets_v1';
+const SAVED_POST_IDS_KEY = 'saved_post_ids_v1';
+const FEED_MUTE_KEY = 'feed_mute_v1';
 const CHAT_DRAFT_INDEX_KEY = 'chat_draft_index_v1';
 const GROUP_CHAT_DRAFT_INDEX_KEY = 'group_chat_draft_index_v1';
 
@@ -224,6 +227,20 @@ export type FeedPreferencesDraft = {
   scope: 'nearby' | 'global';
 };
 
+export type FeedPreset = {
+  id: string;
+  name: string;
+  searchQuery: string;
+  campusFilter: string;
+  sort: 'recent' | 'top';
+  scope: 'nearby' | 'global';
+};
+
+export type FeedMuteDraft = {
+  userIds: string[];
+  keywords: string[];
+};
+
 export async function getFeedPreferencesDraft(): Promise<FeedPreferencesDraft | null> {
   const value = await SecureStore.getItemAsync(FEED_PREFERENCES_DRAFT_KEY);
   if (!value) return null;
@@ -257,6 +274,66 @@ export async function clearFeedPreferencesDraft(): Promise<void> {
   await SecureStore.deleteItemAsync(FEED_PREFERENCES_DRAFT_KEY);
 }
 
+export async function getFeedPresets(): Promise<FeedPreset[]> {
+  const value = await SecureStore.getItemAsync(FEED_PRESETS_KEY);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as FeedPreset[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveFeedPresets(presets: FeedPreset[]): Promise<void> {
+  if (!presets.length) {
+    await SecureStore.deleteItemAsync(FEED_PRESETS_KEY);
+    return;
+  }
+  await SecureStore.setItemAsync(FEED_PRESETS_KEY, JSON.stringify(presets));
+}
+
+export async function getSavedPostIds(): Promise<string[]> {
+  const value = await SecureStore.getItemAsync(SAVED_POST_IDS_KEY);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as string[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function saveSavedPostIds(postIds: string[]): Promise<void> {
+  if (!postIds.length) {
+    await SecureStore.deleteItemAsync(SAVED_POST_IDS_KEY);
+    return;
+  }
+  await SecureStore.setItemAsync(SAVED_POST_IDS_KEY, JSON.stringify([...new Set(postIds)]));
+}
+
+export async function getFeedMuteDraft(): Promise<FeedMuteDraft> {
+  const value = await SecureStore.getItemAsync(FEED_MUTE_KEY);
+  if (!value) return { userIds: [], keywords: [] };
+  try {
+    const parsed = JSON.parse(value) as Partial<FeedMuteDraft>;
+    return {
+      userIds: Array.isArray(parsed.userIds) ? parsed.userIds : [],
+      keywords: Array.isArray(parsed.keywords) ? parsed.keywords : [],
+    };
+  } catch {
+    return { userIds: [], keywords: [] };
+  }
+}
+
+export async function saveFeedMuteDraft(draft: FeedMuteDraft): Promise<void> {
+  if (!draft.userIds.length && !draft.keywords.length) {
+    await SecureStore.deleteItemAsync(FEED_MUTE_KEY);
+    return;
+  }
+  await SecureStore.setItemAsync(FEED_MUTE_KEY, JSON.stringify(draft));
+}
+
 export async function clearAllDrafts(): Promise<void> {
   await Promise.all([
     clearPostDraft(),
@@ -265,6 +342,9 @@ export async function clearAllDrafts(): Promise<void> {
     clearCommunitySearchDraft(),
     clearFriendSearchDraft(),
     clearFeedPreferencesDraft(),
+    saveFeedPresets([]),
+    saveSavedPostIds([]),
+    saveFeedMuteDraft({ userIds: [], keywords: [] }),
   ]);
 
   const [chatIndex, groupIndex] = await Promise.all([
