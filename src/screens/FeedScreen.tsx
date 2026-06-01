@@ -403,7 +403,21 @@ export default function FeedScreen() {
                   ))}
                 </View>
               )}
-              {hasActiveFilters && (
+              {mutedUserIds.length > 0 && (
+                <View style={styles.presetRow}>
+                  {mutedUserIds.map((userId) => (
+                    <TouchableOpacity
+                      key={userId}
+                      style={styles.muteChip}
+                      onPress={() =>
+                        setMutedUserIds((prev) => prev.filter((id) => id !== userId))
+                      }
+                    >
+                      <Text style={styles.muteChipText}>Muted user {userId.slice(0, 8)} x</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}              {hasActiveFilters && (
                 <TouchableOpacity style={styles.clearButton} onPress={clearFilters}>
                   <Text style={styles.clearButtonText}>Clear filters</Text>
                 </TouchableOpacity>
@@ -587,4 +601,5 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
 });
+
 
