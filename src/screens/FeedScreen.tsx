@@ -417,7 +417,8 @@ export default function FeedScreen() {
                     </TouchableOpacity>
                   ))}
                 </View>
-              )}              {hasActiveFilters && (
+              )}
+              {hasActiveFilters && (
                 <TouchableOpacity style={styles.clearButton} onPress={clearFilters}>
                   <Text style={styles.clearButtonText}>Clear filters</Text>
                 </TouchableOpacity>
