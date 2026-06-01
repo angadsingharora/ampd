@@ -321,7 +321,7 @@ export default function FeedScreen() {
             <View style={styles.sortRow}>
               <View style={styles.feedMetaRow}>
                 <Text style={styles.feedMetaText}>
-                  {posts.length} {posts.length === 1 ? 'post' : 'posts'} • {feedScope} • {sort}
+                  {posts.length} {posts.length === 1 ? 'post' : 'posts'} | {feedScope} | {sort}
                 </Text>
               </View>
               <TextInput
@@ -398,7 +398,7 @@ export default function FeedScreen() {
                         setMutedKeywords((prev) => prev.filter((k) => k !== keyword))
                       }
                     >
-                      <Text style={styles.muteChipText}>#{keyword} ✕</Text>
+                      <Text style={styles.muteChipText}>#{keyword} x</Text>
                     </TouchableOpacity>
                   ))}
                 </View>
@@ -587,3 +587,4 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
 });
+
