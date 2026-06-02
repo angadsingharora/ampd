@@ -69,6 +69,8 @@ export default function FeedScreen() {
   const [mutedKeywords, setMutedKeywords] = useState<string[]>([]);
   const [keywordInput, setKeywordInput] = useState('');
   const [presets, setPresets] = useState<FeedPreset[]>([]);
+  const [presetName, setPresetName] = useState('');
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -191,6 +193,8 @@ export default function FeedScreen() {
     setSort('recent');
     setFeedScope('nearby');
     setSavedOnly(false);
+    setActivePresetId(null);
+    setPresetName('');
     clearFeedPreferencesDraft().catch((err) =>
       console.error('Failed to clear feed preferences draft', err),
     );
@@ -232,18 +236,56 @@ export default function FeedScreen() {
     setCampusFilter(preset.campusFilter);
     setSort(preset.sort);
     setFeedScope(preset.scope);
+    setPresetName(preset.name);
+    setActivePresetId(preset.id);
   };
 
   const handleSaveCurrentPreset = () => {
+    const trimmedName = presetName.trim();
+    const nextName = trimmedName || `Preset ${presets.length + 1}`;
+    if (activePresetId) {
+      setPresets((prev) =>
+        prev.map((preset) =>
+          preset.id === activePresetId
+            ? {
+                ...preset,
+                name: nextName,
+                searchQuery,
+                campusFilter,
+                sort,
+                scope: feedScope,
+              }
+            : preset,
+        ),
+      );
+      setPresetName(nextName);
+      return;
+    }
+
     const next: FeedPreset = {
       id: `${Date.now()}`,
-      name: `Preset ${presets.length + 1}`,
+      name: nextName,
       searchQuery,
       campusFilter,
       sort,
       scope: feedScope,
     };
     setPresets((prev) => [next, ...prev].slice(0, 6));
+    setPresetName(nextName);
+    setActivePresetId(next.id);
+  };
+
+  const handleDeletePreset = (presetId: string) => {
+    setPresets((prev) => prev.filter((preset) => preset.id !== presetId));
+    if (activePresetId === presetId) {
+      setActivePresetId(null);
+      setPresetName('');
+    }
+  };
+
+  const clearPresetSelection = () => {
+    setActivePresetId(null);
+    setPresetName('');
   };
 
   const addKeywordMute = () => {
@@ -339,6 +381,13 @@ export default function FeedScreen() {
                 placeholderTextColor="#999"
                 autoCapitalize="none"
               />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Preset name"
+                value={presetName}
+                onChangeText={setPresetName}
+                placeholderTextColor="#999"
+              />
               <TouchableOpacity
                 style={[styles.sortButton, sort === 'recent' && styles.sortButtonActive]}
                 onPress={() => setSort('recent')}
@@ -362,21 +411,49 @@ export default function FeedScreen() {
                 <Text style={[styles.sortText, savedOnly && styles.sortTextActive]}>Saved</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.clearButton} onPress={handleSaveCurrentPreset}>
-                <Text style={styles.clearButtonText}>Save preset</Text>
+                <Text style={styles.clearButtonText}>
+                  {activePresetId ? 'Update preset' : 'Save preset'}
+                </Text>
               </TouchableOpacity>
+              {activePresetId ? (
+                <TouchableOpacity style={styles.clearButton} onPress={clearPresetSelection}>
+                  <Text style={styles.clearButtonText}>New preset</Text>
+                </TouchableOpacity>
+              ) : null}
               {presets.length > 0 && (
                 <View style={styles.presetRow}>
                   {presets.map((preset) => (
-                    <TouchableOpacity
+                    <View
                       key={preset.id}
-                      style={styles.presetChip}
-                      onPress={() => applyPreset(preset)}
-                      onLongPress={() =>
-                        setPresets((prev) => prev.filter((p) => p.id !== preset.id))
-                      }
+                      style={[
+                        styles.presetChip,
+                        activePresetId === preset.id && styles.presetChipActive,
+                      ]}
                     >
-                      <Text style={styles.presetText}>{preset.name}</Text>
-                    </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.presetApplyButton}
+                        onPress={() => applyPreset(preset)}
+                      >
+                        <Text
+                          style={[
+                            styles.presetText,
+                            activePresetId === preset.id && styles.presetTextActive,
+                          ]}
+                        >
+                          {preset.name}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={styles.presetDeleteButton}
+                        onPress={() => handleDeletePreset(preset.id)}
+                      >
+                        <Ionicons
+                          name="close"
+                          size={14}
+                          color={activePresetId === preset.id ? '#fff' : '#5B4BC4'}
+                        />
+                      </TouchableOpacity>
+                    </View>
                   ))}
                 </View>
               )}
@@ -551,11 +628,29 @@ const styles = StyleSheet.create({
   presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   presetChip: {
     backgroundColor: '#EEE8FF',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingLeft: 10,
+    paddingRight: 4,
+    paddingVertical: 4,
     borderRadius: 999,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  presetChipActive: {
+    backgroundColor: '#6C5CE7',
+  },
+  presetApplyButton: {
+    paddingVertical: 2,
   },
   presetText: { color: '#5B4BC4', fontWeight: '600', fontSize: 12 },
+  presetTextActive: { color: '#fff' },
+  presetDeleteButton: {
+    marginLeft: 4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   muteChip: {
     backgroundColor: '#FFEDEB',
     paddingHorizontal: 10,
