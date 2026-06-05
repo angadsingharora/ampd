@@ -31,6 +31,14 @@ import {
   getFriendSearchDraft,
   saveFriendSearchDraft,
 } from '../services/postDrafts';
+import {
+  CAMPUS_ANTHEM_OPTIONS,
+  CAMPUS_SPOT_OPTIONS,
+  CAMPUS_VIBE_OPTIONS,
+  clearProfileStatusDraft,
+  getProfileStatusDraft,
+  saveProfileStatusDraft,
+} from '../services/profileStatus';
 import type { User } from '../types';
 
 export default function ProfileScreen() {
@@ -46,7 +54,11 @@ export default function ProfileScreen() {
   const [blockedUserIds, setBlockedUserIds] = useState<string[]>([]);
   const [clearingDrafts, setClearingDrafts] = useState(false);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [campusVibe, setCampusVibe] = useState('');
+  const [campusMission, setCampusMission] = useState('');
+  const [campusAnthem, setCampusAnthem] = useState('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const profileStatusSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const loadFriends = useCallback(async () => {
     if (!user) return;
@@ -97,6 +109,41 @@ export default function ProfileScreen() {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
   }, [searchQuery]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadProfileStatus() {
+      const draft = await getProfileStatusDraft();
+      if (!mounted) return;
+      setCampusVibe(draft.vibe);
+      setCampusMission(draft.mission);
+      setCampusAnthem(draft.anthem);
+    }
+
+    loadProfileStatus().catch((err) => console.error('Failed to load campus vibe:', err));
+
+    return () => {
+      mounted = false;
+      if (profileStatusSaveTimer.current) clearTimeout(profileStatusSaveTimer.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (profileStatusSaveTimer.current) clearTimeout(profileStatusSaveTimer.current);
+
+    profileStatusSaveTimer.current = setTimeout(() => {
+      saveProfileStatusDraft({
+        vibe: campusVibe,
+        mission: campusMission,
+        anthem: campusAnthem,
+      }).catch((err) => console.error('Failed to save campus vibe:', err));
+    }, 250);
+
+    return () => {
+      if (profileStatusSaveTimer.current) clearTimeout(profileStatusSaveTimer.current);
+    };
+  }, [campusAnthem, campusMission, campusVibe]);
 
   async function handleSearch() {
     if (!user || searchQuery.trim().length < 2) return;
@@ -198,6 +245,46 @@ export default function ProfileScreen() {
     }
   }
 
+  function handleRandomizeCampusVibe() {
+    setCampusVibe(CAMPUS_VIBE_OPTIONS[Math.floor(Math.random() * CAMPUS_VIBE_OPTIONS.length)]);
+    setCampusMission(CAMPUS_SPOT_OPTIONS[Math.floor(Math.random() * CAMPUS_SPOT_OPTIONS.length)]);
+    setCampusAnthem(CAMPUS_ANTHEM_OPTIONS[Math.floor(Math.random() * CAMPUS_ANTHEM_OPTIONS.length)]);
+  }
+
+  async function handleShareCampusVibe() {
+    if (!user) return;
+
+    const message = [
+      `Campus vibe check from @${user.username}`,
+      `Mood: ${campusVibe || 'Undefined but committed.'}`,
+      `Current mission: ${campusMission || 'Waiting for the plot to arrive.'}`,
+      `Anthem: ${campusAnthem || 'Classified information.'}`,
+      `Campus: ${user.campus}`,
+    ].join('\n');
+
+    try {
+      await Share.share({
+        title: `${user.username}'s Campus Vibe`,
+        message,
+      });
+    } catch (err) {
+      console.error('Failed to share campus vibe:', err);
+      Alert.alert('Error', 'Could not open share sheet.');
+    }
+  }
+
+  async function handleResetCampusVibe() {
+    try {
+      await clearProfileStatusDraft();
+      setCampusVibe('');
+      setCampusMission('');
+      setCampusAnthem('');
+    } catch (err) {
+      console.error('Failed to reset campus vibe:', err);
+      Alert.alert('Error', 'Could not reset campus vibe.');
+    }
+  }
+
   async function handleClearAllDrafts() {
     setClearingDrafts(true);
     try {
@@ -239,6 +326,72 @@ export default function ProfileScreen() {
           <Ionicons name="share-social-outline" size={16} color="#fff" />
           <Text style={styles.shareProfileText}>Share Profile (P2U)</Text>
         </TouchableOpacity>
+      </View>
+
+      <View style={[styles.section, styles.vibeSection]}>
+        <View style={styles.vibeHeader}>
+          <View>
+            <Text style={styles.sectionTitle}>Campus Vibe</Text>
+            <Text style={styles.vibeSubtitle}>A tiny status card for your current era.</Text>
+          </View>
+          <TouchableOpacity style={styles.randomizeBtn} onPress={handleRandomizeCampusVibe}>
+            <Ionicons name="shuffle" size={16} color="#6C5CE7" />
+            <Text style={styles.randomizeText}>Randomize</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.vibeChipWrap}>
+          {CAMPUS_VIBE_OPTIONS.map((option) => {
+            const selected = option === campusVibe;
+            return (
+              <TouchableOpacity
+                key={option}
+                style={[styles.vibeChip, selected && styles.vibeChipSelected]}
+                onPress={() => setCampusVibe(option)}
+              >
+                <Text style={[styles.vibeChipText, selected && styles.vibeChipTextSelected]}>{option}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        <View style={styles.vibeCard}>
+          <Text style={styles.vibeCardEyebrow}>CURRENT READOUT</Text>
+          <Text style={styles.vibeCardMood}>{campusVibe || 'Pick a vibe'}</Text>
+
+          <Text style={styles.vibeLabel}>Current mission</Text>
+          <TextInput
+            style={styles.vibeInput}
+            placeholder="Library cave, coffee sprint, mysterious errand..."
+            placeholderTextColor="#94A3B8"
+            value={campusMission}
+            onChangeText={setCampusMission}
+          />
+
+          <Text style={styles.vibeLabel}>Anthem</Text>
+          <TextInput
+            style={styles.vibeInput}
+            placeholder="What is the soundtrack right now?"
+            placeholderTextColor="#94A3B8"
+            value={campusAnthem}
+            onChangeText={setCampusAnthem}
+          />
+
+          <View style={styles.vibeFooter}>
+            <Text style={styles.vibeCampus}>{user.campus}</Text>
+            <Text style={styles.vibeHandle}>@{user.username}</Text>
+          </View>
+        </View>
+
+        <View style={styles.vibeActionRow}>
+          <TouchableOpacity style={styles.secondaryActionBtn} onPress={() => handleResetCampusVibe().catch(console.error)}>
+            <Text style={styles.secondaryActionText}>Reset</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.primaryActionBtn} onPress={() => handleShareCampusVibe().catch(console.error)}>
+            <Ionicons name="paper-plane-outline" size={16} color="#fff" />
+            <Text style={styles.primaryActionText}>Share Vibe</Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       <View style={styles.section}>
@@ -543,4 +696,143 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   shareProfileText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  vibeSection: {
+    backgroundColor: '#FFF8ED',
+    borderWidth: 1,
+    borderColor: '#F3DFC0',
+  },
+  vibeHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 12,
+  },
+  vibeSubtitle: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#7C6A53',
+  },
+  randomizeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D9C09C',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    backgroundColor: '#FFFDF8',
+  },
+  randomizeText: {
+    color: '#6C5CE7',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  vibeChipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  vibeChip: {
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#FFFDF8',
+    borderWidth: 1,
+    borderColor: '#E6D6BC',
+  },
+  vibeChipSelected: {
+    backgroundColor: '#6C5CE7',
+    borderColor: '#6C5CE7',
+  },
+  vibeChipText: {
+    color: '#6B5B45',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  vibeChipTextSelected: {
+    color: '#fff',
+  },
+  vibeCard: {
+    borderRadius: 16,
+    padding: 16,
+    backgroundColor: '#1C1630',
+  },
+  vibeCardEyebrow: {
+    color: '#C8BCFF',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  vibeCardMood: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '800',
+    marginTop: 6,
+    marginBottom: 14,
+  },
+  vibeLabel: {
+    color: '#C9C2E1',
+    fontSize: 12,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  vibeInput: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    backgroundColor: '#2B2347',
+    color: '#fff',
+    marginBottom: 12,
+  },
+  vibeFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 4,
+  },
+  vibeCampus: {
+    color: '#F7C873',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  vibeHandle: {
+    color: '#C9C2E1',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  vibeActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginTop: 12,
+  },
+  secondaryActionBtn: {
+    flex: 1,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D5B98B',
+    paddingVertical: 12,
+    alignItems: 'center',
+    backgroundColor: '#FFFDF8',
+  },
+  secondaryActionText: {
+    color: '#7B5E34',
+    fontWeight: '700',
+  },
+  primaryActionBtn: {
+    flex: 1,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+    backgroundColor: '#6C5CE7',
+  },
+  primaryActionText: {
+    color: '#fff',
+    fontWeight: '700',
+  },
 });
